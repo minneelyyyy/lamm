@@ -185,7 +185,7 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
             Ok(0) => None,
             Err(e) => Some(Err(TokenizeError::IO(e))),
             _ => {
-                let re = regex::Regex::new(r#"(\-?[a-zA-Z0-9\.'_]+)|[`~!@#\$%\^&\*\(\)\+-=\[\]\{\}\\|;:,<\.>/\?]+|("[^"]+")"#).expect("This wont fail promise :3");
+                let re = regex::Regex::new(r#"[a-zA-Z0-9\.'_]+|[`~!@#\$%\^&\*\(\)\+-=\[\]\{\}\\|;:,<\.>/\?]+|("[^"]+")"#).expect("This wont fail promise :3");
 
                 for token in re.find_iter(input.as_str()).map(|mat| mat.as_str()).map(Token::parse) {
                     match token {
