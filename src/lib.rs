@@ -3,21 +3,18 @@ mod tokenizer;
 mod parser;
 mod executor;
 
-pub use tokenizer::{Tokenizer, TokenizeError};
-pub use parser::{Parser, ParseError};
-pub use executor::{Executor, RuntimeError};
-
 use std::fmt::Display;
+use std::io::BufRead;
 
 #[derive(Clone, Debug)]
-pub(crate) enum Type {
+pub enum Type {
     Float,
     Int,
     Bool,
     String,
     Nil,
     Any,
-    Function(Box<Type>, Vec<Type>),
+    _Function(Box<Type>, Vec<Type>),
 }
 
 impl Display for Type {
@@ -29,7 +26,7 @@ impl Display for Type {
             Self::String => "String".into(),
             Self::Nil => "Nil".into(),
             Self::Any => "Any".into(),
-            Self::Function(r, _) => format!("Function -> {}", *r)
+            Self::_Function(r, _) => format!("Function -> {}", *r)
         })
     }
 }
@@ -70,7 +67,11 @@ impl Display for Value {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionDeclaration {
-    name: String,
-    r: Type,
+    _name: String,
+    _r: Type,
     args: Vec<(String, Type)>,
+}
+
+pub fn evaluate<R: BufRead>(r: R) -> impl Iterator<Item = Result<Value, executor::RuntimeError>> {
+    executor::Executor::new(parser::Parser::new(tokenizer::Tokenizer::new(r)))
 }

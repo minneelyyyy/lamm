@@ -34,7 +34,7 @@ impl Display for ParseError {
 impl error::Error for ParseError {}
 
 #[derive(Clone, Debug)]
-pub enum ParseTree {
+pub(crate) enum ParseTree {
     // Mathematical Operators
     Add(Box<ParseTree>, Box<ParseTree>),
     Sub(Box<ParseTree>, Box<ParseTree>),
@@ -54,8 +54,6 @@ pub enum ParseTree {
     // Defining Objects
     Equ(String, Box<ParseTree>, Box<ParseTree>),
     LazyEqu(String, Box<ParseTree>, Box<ParseTree>),
-    GlobalEqu(String, Box<ParseTree>),
-    LazyGlobalEqu(String, Box<ParseTree>),
     FunctionDefinition(String, Vec<(String, Type)>, Type, Box<ParseTree>, Box<ParseTree>),
 
     // Functional Operations
@@ -129,7 +127,7 @@ impl ParseTree {
                                 Box::new(ParseTree::parse(tokens, globals, locals)?),
                                 Box::new(ParseTree::parse(tokens, globals, locals)?)
                             )),
-                            Op::Equ | Op::LazyEqu | Op::GlobalEqu | Op::LazyGlobalEqu => {
+                            Op::Equ | Op::LazyEqu => {
                                 let token = tokens.next()
                                     .ok_or(ParseError::UnexpectedEndInput)?
                                     .map_err(|e| ParseError::TokenizeError(e))?;
@@ -142,12 +140,6 @@ impl ParseTree {
                                         )),
                                         Op::LazyEqu => Ok(ParseTree::LazyEqu(ident.clone(),
                                             Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                            Box::new(ParseTree::parse(tokens, globals, locals)?)
-                                        )),
-                                        Op::GlobalEqu => Ok(ParseTree::GlobalEqu(ident.clone(),
-                                            Box::new(ParseTree::parse(tokens, globals, locals)?)
-                                        )),
-                                        Op::LazyGlobalEqu => Ok(ParseTree::LazyGlobalEqu(ident.clone(),
                                             Box::new(ParseTree::parse(tokens, globals, locals)?)
                                         )),
                                         _ => panic!("Operator literally changed under your nose"),
@@ -173,8 +165,8 @@ impl ParseTree {
                                         let locals = locals.to_mut();
 
                                         locals.insert(ident.clone(), FunctionDeclaration {
-                                            name: ident.clone(),
-                                            r: Type::Any,
+                                            _name: ident.clone(),
+                                            _r: Type::Any,
                                             args: args.clone(),
                                         });
 
@@ -240,7 +232,7 @@ impl ParseTree {
 }
 
 /// Parses input tokens and produces ParseTrees for an Executor
-pub struct Parser<I: Iterator<Item = Result<Token, TokenizeError>>> {
+pub(crate) struct Parser<I: Iterator<Item = Result<Token, TokenizeError>>> {
     tokens: I,
 
     // These are used to keep track of functions in the current context
@@ -257,11 +249,6 @@ impl<I: Iterator<Item = Result<Token, TokenizeError>>> Parser<I> {
             globals: HashMap::new(),
             locals: HashMap::new()
         }
-    }
-
-    pub fn globals(mut self, g: HashMap<String, FunctionDeclaration>) -> Self {
-        self.globals = g;
-        self
     }
 }
 

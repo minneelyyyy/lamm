@@ -1,6 +1,5 @@
 use super::{Value, Type, FunctionDeclaration};
 use super::parser::{ParseTree, ParseError};
-use super::tokenizer::Op;
 
 use std::collections::HashMap;
 use std::borrow::Cow;
@@ -186,8 +185,6 @@ impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Executor<I> {
                     self.exec(*scope, &mut Cow::Borrowed(&locals))
                 }
             },
-            ParseTree::GlobalEqu(ident, body) => todo!(),
-            ParseTree::LazyGlobalEqu(ident, body) => todo!(),
             ParseTree::FunctionDefinition(ident, args, r, body, scope) => {
                 let existing = locals.get(&ident).or(self.globals.get(&ident)).cloned();
 
@@ -197,7 +194,7 @@ impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Executor<I> {
                         let locals = locals.to_mut();
 
                         locals.insert(ident.clone(), Object::Function(Function {
-                            decl: FunctionDeclaration { name: ident.clone(), r, args },
+                            decl: FunctionDeclaration { _name: ident.clone(), _r: r, args },
                             body: Some(body)
                         }));
 

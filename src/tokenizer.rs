@@ -33,7 +33,7 @@ impl Display for TokenizeError {
 impl error::Error for TokenizeError {}
 
 #[derive(Debug, Clone)]
-pub enum Op {
+pub(crate) enum Op {
     Add,
     Sub,
     Mul,
@@ -42,8 +42,6 @@ pub enum Op {
     Equ,
     Mod,
     LazyEqu,
-    GlobalEqu,
-    LazyGlobalEqu,
     FunctionDeclare(usize),
     Compose,
     Id,
@@ -62,7 +60,7 @@ pub enum Op {
 }
 
 #[derive(Debug, Clone)]
-pub enum Token {
+pub(crate) enum Token {
     Identifier(String),
     Operator(Op),
     Constant(Value),
@@ -100,8 +98,6 @@ impl Token {
             "%" => Ok(Token::Operator(Op::Mod)),
             "="  => Ok(Token::Operator(Op::Equ)),
             "."  => Ok(Token::Operator(Op::LazyEqu)),
-            "=>" => Ok(Token::Operator(Op::GlobalEqu)),
-            ".>" => Ok(Token::Operator(Op::LazyGlobalEqu)),
             "~"  => Ok(Token::Operator(Op::Compose)),
             "," => Ok(Token::Operator(Op::Id)),
             "?" => Ok(Token::Operator(Op::If)),
@@ -149,7 +145,7 @@ impl Token {
 }
 
 /// Tokenize an input stream of source code for a Parser
-pub struct Tokenizer<R: BufRead> {
+pub(crate) struct Tokenizer<R: BufRead> {
     reader: R,
     tokens: VecDeque<Token>,
 }
