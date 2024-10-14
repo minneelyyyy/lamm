@@ -148,6 +148,7 @@ impl Token {
     }
 }
 
+/// Tokenize an input stream of source code for a Parser
 pub struct Tokenizer<R: BufRead> {
     reader: R,
     tokens: VecDeque<Token>,

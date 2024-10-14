@@ -239,6 +239,7 @@ impl ParseTree {
     }
 }
 
+/// Parses input tokens and produces ParseTrees for an Executor
 pub struct Parser<I: Iterator<Item = Result<Token, TokenizeError>>> {
     tokens: I,
 

@@ -60,6 +60,7 @@ enum Object {
     Function(Function),
 }
 
+/// Executes an input of ParseTrees
 pub struct Executor<I: Iterator<Item = Result<ParseTree, ParseError>>> {
     exprs: I,
     globals: HashMap<String, Object>,

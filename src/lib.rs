@@ -34,6 +34,7 @@ impl Display for Type {
     }
 }
 
+/// Represents the result of executing a ParseTree with an Executor
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Float(f64),

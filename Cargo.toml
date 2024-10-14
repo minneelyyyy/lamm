@@ -2,6 +2,9 @@
 name = "lamm"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "a simple, functional paradigm programming language which uses Polish notation"
+repository = "https://github.com/minneelyyyy/lamm"
 
 [dependencies]
 regex = "1.11"
