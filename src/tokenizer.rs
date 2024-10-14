@@ -11,7 +11,9 @@ pub enum TokenizeError {
     InvalidNumericConstant(String),
     InvalidIdentifier(String),
     UnableToMatchToken(String),
+    UnclosedString,
     IO(io::Error),
+    Regex(regex::Error),
 }
 
 impl Display for TokenizeError {
@@ -25,7 +27,9 @@ impl Display for TokenizeError {
                 => write!(f, "invalid identifier `{ident}`"),
             TokenizeError::UnableToMatchToken(token)
                 => write!(f, "the token `{token}` was unable to be parsed"),
-            TokenizeError::IO(io) => write!(f, "{io}")
+            TokenizeError::UnclosedString => write!(f, "newline was found before string was closed"),
+            TokenizeError::IO(io) => write!(f, "{io}"),
+            TokenizeError::Regex(re) => write!(f, "{re}"),
         }
     }
 }
@@ -76,68 +80,66 @@ fn get_dot_count(s: &str) -> Option<usize> {
     )
 }
 
-fn valid_identifier(c: char) -> bool {
-    c.is_alphanumeric() || c == '\'' || c == '_'
-}
-
 impl Token {
+    /// Parse a single token
     fn parse(s: &str) -> Result<Self, TokenizeError> {
-        let string = regex::Regex::new(r#"".+""#).expect("LOL!");
+        let string = regex::Regex::new(r#"".+""#).map_err(|e| TokenizeError::Regex(e))?;
+        let identifier = regex::Regex::new(r#"[A-Za-z_][A-Za-z0-9_']*"#).map_err(|e| TokenizeError::Regex(e))?;
+        let number = regex::Regex::new(r#"([0-9]+\.?[0-9]*)|(\.[0-9])"#).map_err(|e| TokenizeError::Regex(e))?;
 
         if string.is_match(s) {
-            return Ok(Token::Constant(Value::String(s[1..s.len() - 1].to_string())));
-        }
-
-        match s {
-            // First check if s is an operator
-            "+"  => Ok(Token::Operator(Op::Add)),
-            "-"  => Ok(Token::Operator(Op::Sub)),
-            "*"  => Ok(Token::Operator(Op::Mul)),
-            "/"  => Ok(Token::Operator(Op::Div)),
-            "**" => Ok(Token::Operator(Op::Exp)),
-            "%" => Ok(Token::Operator(Op::Mod)),
-            "="  => Ok(Token::Operator(Op::Equ)),
-            "."  => Ok(Token::Operator(Op::LazyEqu)),
-            "~"  => Ok(Token::Operator(Op::Compose)),
-            "," => Ok(Token::Operator(Op::Id)),
-            "?" => Ok(Token::Operator(Op::If)),
-            "??" => Ok(Token::Operator(Op::IfElse)),
-            ">" => Ok(Token::Operator(Op::GreaterThan)),
-            "<" => Ok(Token::Operator(Op::LessThan)),
-            ">=" => Ok(Token::Operator(Op::GreaterThanOrEqualTo)),
-            "<=" => Ok(Token::Operator(Op::LessThanOrEqualTo)),
-            "==" => Ok(Token::Operator(Op::EqualTo)),
-
-            // then some keywords
-            "true" => Ok(Token::Constant(Value::Bool(true))),
-            "false" => Ok(Token::Constant(Value::Bool(false))),
-            "not" => Ok(Token::Operator(Op::Not)),
-
-            // Type casting
-            "int" => Ok(Token::Operator(Op::IntCast)),
-            "float" => Ok(Token::Operator(Op::FloatCast)),
-            "bool" => Ok(Token::Operator(Op::BoolCast)),
-            "string" => Ok(Token::Operator(Op::StringCast)),
-
-            // then variable length keywords, constants, and identifiers
-            _ => {
-                if s.starts_with(':') {
-                    Ok(Token::Operator(Op::FunctionDeclare(
-                        get_dot_count(s).map(|x| x - 1).ok_or(TokenizeError::InvalidDynamicOperator(s.to_string()))?
-                    )))
-                } else if s.starts_with(|c| char::is_digit(c, 10) || c == '-') {
-                    if let Ok(int) = s.parse::<i64>() {
-                        Ok(Token::Constant(Value::Int(int)))
-                    } else if let Ok(float) = s.parse::<f64>() {
-                        Ok(Token::Constant(Value::Float(float)))
+            Ok(Token::Constant(Value::String(s[1..s.len() - 1].to_string())))
+        } else if identifier.is_match(s) {
+            Ok(Token::Identifier(s.to_string()))
+        } else if number.is_match(s) {
+            if let Ok(int) = s.parse::<i64>() {
+                Ok(Token::Constant(Value::Int(int)))
+            } else if let Ok(float) = s.parse::<f64>() {
+                Ok(Token::Constant(Value::Float(float)))
+            } else {
+                Err(TokenizeError::InvalidNumericConstant(s.to_string()))
+            }
+        } else {
+            match s {
+                // First check if s is an operator
+                "+"  => Ok(Token::Operator(Op::Add)),
+                "-"  => Ok(Token::Operator(Op::Sub)),
+                "*"  => Ok(Token::Operator(Op::Mul)),
+                "/"  => Ok(Token::Operator(Op::Div)),
+                "**" => Ok(Token::Operator(Op::Exp)),
+                "%"  => Ok(Token::Operator(Op::Mod)),
+                "="  => Ok(Token::Operator(Op::Equ)),
+                "."  => Ok(Token::Operator(Op::LazyEqu)),
+                "~"  => Ok(Token::Operator(Op::Compose)),
+                ","  => Ok(Token::Operator(Op::Id)),
+                "?"  => Ok(Token::Operator(Op::If)),
+                "??" => Ok(Token::Operator(Op::IfElse)),
+                ">"  => Ok(Token::Operator(Op::GreaterThan)),
+                "<"  => Ok(Token::Operator(Op::LessThan)),
+                ">=" => Ok(Token::Operator(Op::GreaterThanOrEqualTo)),
+                "<=" => Ok(Token::Operator(Op::LessThanOrEqualTo)),
+                "==" => Ok(Token::Operator(Op::EqualTo)),
+    
+                // then some keywords
+                "true"  => Ok(Token::Constant(Value::Bool(true))),
+                "false" => Ok(Token::Constant(Value::Bool(false))),
+                "not"   => Ok(Token::Operator(Op::Not)),
+    
+                // Type casting
+                "int"    => Ok(Token::Operator(Op::IntCast)),
+                "float"  => Ok(Token::Operator(Op::FloatCast)),
+                "bool"   => Ok(Token::Operator(Op::BoolCast)),
+                "string" => Ok(Token::Operator(Op::StringCast)),
+    
+                // then variable length keywords
+                _ => {
+                    if s.starts_with(":") {
+                        Ok(Token::Operator(Op::FunctionDeclare(
+                            get_dot_count(s).map(|x| x - 1).ok_or(TokenizeError::InvalidDynamicOperator(s.to_string()))?
+                        )))
                     } else {
-                        Err(TokenizeError::InvalidNumericConstant(s.to_string()))
+                        Err(TokenizeError::UnableToMatchToken(s.to_string()))
                     }
-                } else if s.starts_with(valid_identifier) {
-                    let valid = s.chars().skip(1).all(valid_identifier);
-                    valid.then(|| Token::Identifier(s.to_string())).ok_or(TokenizeError::InvalidIdentifier(s.to_string()))
-                } else {
-                    Err(TokenizeError::UnableToMatchToken(s.to_string()))
                 }
             }
         }
@@ -178,21 +180,32 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
 
         let mut input = String::new();
 
-        match self.reader.read_to_string(&mut input) {
+        match self.reader.read_line(&mut input) {
             Ok(0) => None,
             Err(e) => Some(Err(TokenizeError::IO(e))),
             _ => {
-                let re = regex::Regex::new(r#"[a-zA-Z0-9\.'_]+|[`~!@#\$%\^&\*\(\)\+-=\[\]\{\}\\|;:,<\.>/\?]+|("[^"]+")"#).expect("This wont fail promise :3");
+                let mut buffer = String::new();
 
-                for token in re.find_iter(input.as_str()).map(|mat| mat.as_str()).map(Token::parse) {
-                    match token {
-                        Ok(token) => self.tokens.push_back(token),
-                        Err(e) => return Some(Err(e)),
-                    }
+                for c in input.chars() {
+
                 }
-
-                self.tokens.pop_front().map(|x| Ok(x))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn tokenizer() {
+        let program = "\"hello\nworld\"";
+
+        let tok = Tokenizer::from_str(program).unwrap();
+        let tokens: Vec<Token> = tok.collect::<Result<_, TokenizeError>>().expect("tokenizer error");
+
+        println!("{tokens:?}");
     }
 }
