@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::error::Error;
+use std::io::{self, Read, Write};
 
 #[derive(Debug)]
 pub enum RuntimeError {
@@ -16,6 +17,7 @@ pub enum RuntimeError {
     FunctionUndefined(String),
     NotAVariable(String),
     ParseFail(String, Type),
+    IO(io::Error),
 }
 
 impl Display for RuntimeError {
@@ -31,6 +33,7 @@ impl Display for RuntimeError {
             Self::FunctionUndefined(ident) => write!(f, "function `{ident}` was not defined"),
             Self::NotAVariable(ident) => write!(f, "`{ident}` is a function but was attempted to be used like a variable"),
             Self::ParseFail(s, t) => write!(f, "`\"{s}\"` couldn't be parsed into {}", t),
+            Self::IO(e) => write!(f, "{e}"),
         }
     }
 }
@@ -60,16 +63,44 @@ enum Object {
 }
 
 /// Executes an input of ParseTrees
-pub struct Executor<I: Iterator<Item = Result<ParseTree, ParseError>>> {
+pub struct Executor<'a, I>
+where
+    I: Iterator<Item = Result<ParseTree, ParseError>>,
+{
     exprs: I,
     globals: HashMap<String, Object>,
+    stdout: Box<dyn Write + 'a>,
+    stdin: Box<dyn Read + 'a>,
 }
 
-impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Executor<I> {
+impl<'a, I> Executor<'a, I>
+where
+    I: Iterator<Item = Result<ParseTree, ParseError>>,
+{
     pub fn new(exprs: I) -> Self {
         Self {
             exprs,
             globals: HashMap::new(),
+            stdout: Box::new(io::stdout()),
+            stdin: Box::new(io::stdin()),
+        }
+    }
+
+    pub fn stdout(self, writer: impl Write + 'a) -> Self {
+        Self {
+            exprs: self.exprs,
+            globals: self.globals,
+            stdout: Box::new(writer),
+            stdin: self.stdin,
+        }
+    }
+
+    pub fn stdin(self, reader: impl Read + 'a) -> Self {
+        Self {
+            exprs: self.exprs,
+            globals: self.globals,
+            stdout: self.stdout,
+            stdin: Box::new(reader),
         }
     }
 
@@ -265,7 +296,7 @@ impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Executor<I> {
                 }
             },
             ParseTree::Constant(value) => Ok(value),
-            ParseTree::ToInt(x) => match self.exec(x, locals)? {
+            ParseTree::IntCast(x) => match self.exec(x, locals)? {
                 Value::Int(x) => Ok(Value::Int(x)),
                 Value::Float(x) => Ok(Value::Int(x as i64)),
                 Value::Bool(x) => Ok(Value::Int(if x { 1 } else { 0 })),
@@ -275,7 +306,7 @@ impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Executor<I> {
                 }
                 x => Err(RuntimeError::NoOverloadForTypes("int".into(), vec![x])),
             },
-            ParseTree::ToFloat(x) => match self.exec(x, locals)? {
+            ParseTree::FloatCast(x) => match self.exec(x, locals)? {
                 Value::Int(x) => Ok(Value::Float(x as f64)),
                 Value::Float(x) => Ok(Value::Float(x)),
                 Value::Bool(x) => Ok(Value::Float(if x { 1.0 } else { 0.0 })),
@@ -285,19 +316,25 @@ impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Executor<I> {
                 }
                 x => Err(RuntimeError::NoOverloadForTypes("float".into(), vec![x])),
             },
-            ParseTree::ToBool(x) => match self.exec(x, locals)? {
+            ParseTree::BoolCast(x) => match self.exec(x, locals)? {
                 Value::Int(x) => Ok(Value::Bool(x != 0)),
                 Value::Float(x) => Ok(Value::Bool(x != 0.0)),
                 Value::Bool(x) => Ok(Value::Bool(x)),
                 Value::String(x) => Ok(Value::Bool(!x.is_empty())),
                 x => Err(RuntimeError::NoOverloadForTypes("bool".into(), vec![x])),
             },
-            ParseTree::ToString(x) => Ok(Value::String(format!("{}", self.exec(x, locals)?))),
+            ParseTree::StringCast(x) => Ok(Value::String(format!("{}", self.exec(x, locals)?))),
+            ParseTree::Print(x) => match self.exec(x, locals)? {
+                x => {
+                    writeln!(self.stdout, "{x}").map_err(|e| RuntimeError::IO(e));
+                    Ok(Value::Nil)
+                }
+            }
         }
     }
 }
 
-impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Iterator for Executor<I> {
+impl<'a, I: Iterator<Item = Result<ParseTree, ParseError>>> Iterator for Executor<'a, I> {
     type Item = Result<Value, RuntimeError>;
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -64,6 +64,7 @@ pub(crate) enum Op {
     FloatCast,
     BoolCast,
     StringCast,
+    Print,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +121,9 @@ impl Token {
             "float"  => Ok(Token::Operator(Op::FloatCast)),
             "bool"   => Ok(Token::Operator(Op::BoolCast)),
             "string" => Ok(Token::Operator(Op::StringCast)),
+
+            // misc
+            "print" => Ok(Token::Operator(Op::Print)),
 
             // then variable length keywords
             _ => {

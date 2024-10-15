@@ -70,10 +70,13 @@ pub(crate) enum ParseTree {
     Constant(Value),
 
     // Type Casts
-    ToInt(Box<ParseTree>),
-    ToFloat(Box<ParseTree>),
-    ToBool(Box<ParseTree>),
-    ToString(Box<ParseTree>),
+    IntCast(Box<ParseTree>),
+    FloatCast(Box<ParseTree>),
+    BoolCast(Box<ParseTree>),
+    StringCast(Box<ParseTree>),
+
+    // Misc
+    Print(Box<ParseTree>),
 }
 
 impl ParseTree {
@@ -217,10 +220,11 @@ impl ParseTree {
                                 Box::new(ParseTree::parse(tokens, globals, locals)?)
                             )),
                             Op::Not => Ok(ParseTree::Not(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::IntCast => Ok(ParseTree::ToInt(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::FloatCast => Ok(ParseTree::ToFloat(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::BoolCast => Ok(ParseTree::ToBool(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::StringCast => Ok(ParseTree::ToString(Box::new(ParseTree::parse(tokens, globals, locals)?))),
+                            Op::IntCast => Ok(ParseTree::IntCast(Box::new(ParseTree::parse(tokens, globals, locals)?))),
+                            Op::FloatCast => Ok(ParseTree::FloatCast(Box::new(ParseTree::parse(tokens, globals, locals)?))),
+                            Op::BoolCast => Ok(ParseTree::BoolCast(Box::new(ParseTree::parse(tokens, globals, locals)?))),
+                            Op::StringCast => Ok(ParseTree::StringCast(Box::new(ParseTree::parse(tokens, globals, locals)?))),
+                            Op::Print => Ok(ParseTree::Print(Box::new(ParseTree::parse(tokens, globals, locals)?)))
                         }
                     }
                 }
