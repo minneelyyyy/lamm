@@ -1,4 +1,3 @@
-
 mod tokenizer;
 mod parser;
 mod executor;
@@ -10,15 +9,16 @@ use tokenizer::Tokenizer;
 use std::fmt::Display;
 use std::io::{Write, Read, BufRead};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     Float,
     Int,
     Bool,
     String,
+    Array,
+    _Function(Box<Type>, Vec<Type>),
     Nil,
     Any,
-    _Function(Box<Type>, Vec<Type>),
 }
 
 impl Display for Type {
@@ -28,9 +28,10 @@ impl Display for Type {
             Self::Int => "Int".into(),
             Self::Bool => "Bool".into(),
             Self::String => "String".into(),
+            Self::Array => format!("Array"),
+            Self::_Function(r, _) => format!("Function -> {}", *r),
             Self::Nil => "Nil".into(),
             Self::Any => "Any".into(),
-            Self::_Function(r, _) => format!("Function -> {}", *r)
         })
     }
 }
@@ -42,6 +43,7 @@ pub enum Value {
     Int(i64),
     Bool(bool),
     String(String),
+    Array(Vec<Value>),
     Nil,
 }
 
@@ -52,6 +54,7 @@ impl Value {
             Self::Int(_) => Type::Int,
             Self::Bool(_) => Type::Bool,
             Self::String(_) => Type::String,
+            Self::Array(_) => Type::Array,
             Self::Nil => Type::Nil,
         }
     }
@@ -64,6 +67,7 @@ impl Display for Value {
             Self::Int(x) => write!(f, "{x}"),
             Self::Bool(x) => write!(f, "{}", if *x { "true" } else { "false" }),
             Self::String(x) => write!(f, "{x}"),
+            Self::Array(v) => write!(f, "[{}]", v.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(" ")),
             Self::Nil => write!(f, "nil"),
         }
     }
@@ -72,8 +76,7 @@ impl Display for Value {
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionDeclaration {
     _name: String,
-    _r: Type,
-    args: Vec<(String, Type)>,
+    args: Vec<String>,
 }
 
 pub struct Runtime<'a, R: BufRead> {

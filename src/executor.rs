@@ -116,6 +116,8 @@ where
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 + y)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x + y)),
                 (Value::String(x), Value::String(y)) => Ok(Value::String(format!("{x}{y}"))),
+                (Value::Array(x), y) => Ok(Value::Array([x, vec![y]].concat())),
+                (x, Value::Array(y)) => Ok(Value::Array([vec![x], y].concat())),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("+".into(), vec![x, y]))
             },
             ParseTree::Sub(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
@@ -216,7 +218,7 @@ where
                     self.exec(scope, &mut Cow::Borrowed(&locals))
                 }
             },
-            ParseTree::FunctionDefinition(ident, args, r, body, scope) => {
+            ParseTree::FunctionDefinition(ident, args, body, scope) => {
                 let existing = locals.get(&ident).or(self.globals.get(&ident)).cloned();
 
                 match existing {
@@ -225,7 +227,7 @@ where
                         let locals = locals.to_mut();
 
                         locals.insert(ident.clone(), Object::Function(Function {
-                            decl: FunctionDeclaration { _name: ident.clone(), _r: r, args },
+                            decl: FunctionDeclaration { _name: ident.clone(), args },
                             body: Some(body)
                         }));
 
@@ -243,6 +245,7 @@ where
                     Value::Int(i) => i != 0,
                     Value::Bool(b) => b,
                     Value::String(s) => !s.is_empty(),
+                    Value::Array(vec) => !vec.is_empty(),
                     Value::Nil => false,
                 } {
                     self.exec(body, locals)
@@ -254,6 +257,7 @@ where
                 Value::Int(i) => i != 0,
                 Value::Bool(b) => b,
                 Value::String(s) => !s.is_empty(),
+                Value::Array(vec) => !vec.is_empty(),
                 Value::Nil => false,
             } {
                 self.exec(istrue, locals)
@@ -267,7 +271,7 @@ where
                     let locals = locals.to_mut();
                     let body = f.body.ok_or(RuntimeError::FunctionUndefined(ident.clone()))?;
 
-                    for ((name, _), tree) in std::iter::zip(f.decl.args, args) {
+                    for (name, tree) in std::iter::zip(f.decl.args, args) {
                         locals.insert(name.clone(), Object::Variable(Evaluation::Computed(self.exec(Box::new(tree), &mut Cow::Borrowed(locals))?)));
                     }
 
@@ -321,6 +325,7 @@ where
                 Value::Float(x) => Ok(Value::Bool(x != 0.0)),
                 Value::Bool(x) => Ok(Value::Bool(x)),
                 Value::String(x) => Ok(Value::Bool(!x.is_empty())),
+                Value::Array(vec) => Ok(Value::Bool(!vec.is_empty())),
                 x => Err(RuntimeError::NoOverloadForTypes("bool".into(), vec![x])),
             },
             ParseTree::StringCast(x) => Ok(Value::String(format!("{}", self.exec(x, locals)?))),

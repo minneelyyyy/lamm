@@ -65,6 +65,9 @@ pub(crate) enum Op {
     BoolCast,
     StringCast,
     Print,
+    OpenArray,
+    CloseArray,
+    Empty,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +113,8 @@ impl Token {
             ">=" => Ok(Token::Operator(Op::GreaterThanOrEqualTo)),
             "<=" => Ok(Token::Operator(Op::LessThanOrEqualTo)),
             "==" => Ok(Token::Operator(Op::EqualTo)),
+            "[" => Ok(Token::Operator(Op::OpenArray)),
+            "]" => Ok(Token::Operator(Op::CloseArray)),
 
             // then some keywords
             "true"  => Ok(Token::Constant(Value::Bool(true))),
@@ -124,6 +129,7 @@ impl Token {
 
             // misc
             "print" => Ok(Token::Operator(Op::Print)),
+            "empty" => Ok(Token::Operator(Op::Empty)),
 
             // then variable length keywords
             _ => {
