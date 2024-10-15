@@ -243,7 +243,7 @@ impl ParseTree {
                                 }).collect::<Vec<Result<_, TokenizeError>>>().into_iter();
 
                                 let mut trees: Vec<ParseTree> = vec![];
-                                
+
                                 while let Ok(tree) = ParseTree::parse(&mut array_tokens, globals, locals) {
                                     trees.push(tree);
                                 }
