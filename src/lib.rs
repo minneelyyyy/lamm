@@ -66,7 +66,7 @@ impl Display for Value {
             Self::Float(x) => write!(f, "{x}"),
             Self::Int(x) => write!(f, "{x}"),
             Self::Bool(x) => write!(f, "{}", if *x { "true" } else { "false" }),
-            Self::String(x) => write!(f, "{x}"),
+            Self::String(x) => write!(f, "\"{x}\""),
             Self::Array(v) => write!(f, "[{}]", v.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(" ")),
             Self::Nil => write!(f, "nil"),
         }
