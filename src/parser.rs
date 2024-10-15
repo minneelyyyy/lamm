@@ -230,7 +230,7 @@ impl ParseTree {
 
                                 // take tokens until we reach the end of this array
                                 // if we don't collect them here it causes rust to overflow computing the types
-                                let mut array_tokens = tokens.by_ref().take_while(|t| match t {
+                                let array_tokens = tokens.by_ref().take_while(|t| match t {
                                     Ok(Token::Operator(Op::OpenArray)) => {
                                         depth += 1;
                                         true
@@ -240,15 +240,18 @@ impl ParseTree {
                                         depth > 0
                                     }
                                     _ => true,
-                                }).collect::<Vec<Result<_, TokenizeError>>>().into_iter();
+                                }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
 
-                                let mut trees: Vec<ParseTree> = vec![];
+                                let array_tokens: Vec<Result<Token, TokenizeError>> = array_tokens.into_iter().map(|t| Ok(t)).collect();
 
-                                while let Ok(tree) = ParseTree::parse(&mut array_tokens, globals, locals) {
-                                    trees.push(tree);
-                                }
+                                let trees: Vec<ParseTree> = Parser::new(array_tokens.into_iter())
+                                    .globals(globals.clone())
+                                    .locals(locals.to_mut().to_owned())
+                                    .collect::<Result<_, ParseError>>()?;
 
-                                let tree = trees.iter().fold(
+                                trees.iter().for_each(|t| println!("{t:?}"));
+
+                                let tree = trees.into_iter().fold(
                                     ParseTree::Constant(Value::Array(vec![])),
                                     |acc, x| ParseTree::Add(Box::new(acc), Box::new(x.clone())),
                                 );
@@ -284,6 +287,22 @@ impl<I: Iterator<Item = Result<Token, TokenizeError>>> Parser<I> {
             tokens,
             globals: HashMap::new(),
             locals: HashMap::new()
+        }
+    }
+
+    pub fn globals(self, globals: HashMap<String, FunctionDeclaration>) -> Self {
+        Self {
+            tokens: self.tokens,
+            globals,
+            locals: self.locals,
+        }
+    }
+
+    pub fn locals(self, locals: HashMap<String, FunctionDeclaration>) -> Self {
+        Self {
+            tokens: self.tokens,
+            globals: self.globals,
+            locals,
         }
     }
 }
