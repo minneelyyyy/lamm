@@ -249,8 +249,6 @@ impl ParseTree {
                                     .locals(locals.to_mut().to_owned())
                                     .collect::<Result<_, ParseError>>()?;
 
-                                trees.iter().for_each(|t| println!("{t:?}"));
-
                                 let tree = trees.into_iter().fold(
                                     ParseTree::Constant(Value::Array(vec![])),
                                     |acc, x| ParseTree::Add(Box::new(acc), Box::new(x.clone())),
