@@ -76,7 +76,7 @@ impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Executor<I> {
     fn exec(
         &mut self,
         tree: Box<ParseTree>,
-        locals: &mut Cow<HashMap<String, Object>>) -> Result<Value, RuntimeError>
+        locals: &mut Cow<Box<HashMap<String, Object>>>) -> Result<Value, RuntimeError>
     {
         match *tree {
             ParseTree::Add(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
@@ -304,7 +304,7 @@ impl<I: Iterator<Item = Result<ParseTree, ParseError>>> Iterator for Executor<I>
         let expr = self.exprs.next();
 
         match expr {
-            Some(Ok(expr)) => Some(self.exec(Box::new(expr), &mut Cow::Borrowed(&HashMap::new()))),
+            Some(Ok(expr)) => Some(self.exec(Box::new(expr), &mut Cow::Borrowed(&Box::new(HashMap::new())))),
             Some(Err(e)) => Some(Err(RuntimeError::ParseError(e))),
             None => None,
         }
