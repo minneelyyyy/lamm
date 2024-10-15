@@ -1,3 +1,4 @@
+use std::iter::Peekable;
 use std::{error, io};
 use std::collections::VecDeque;
 
@@ -11,6 +12,7 @@ pub enum TokenizeError {
     InvalidNumericConstant(String),
     InvalidIdentifier(String),
     UnableToMatchToken(String),
+    InvalidCharacter(char),
     UnclosedString,
     IO(io::Error),
     Regex(regex::Error),
@@ -27,6 +29,7 @@ impl Display for TokenizeError {
                 => write!(f, "invalid identifier `{ident}`"),
             TokenizeError::UnableToMatchToken(token)
                 => write!(f, "the token `{token}` was unable to be parsed"),
+            TokenizeError::InvalidCharacter(c) => write!(f, "`{c}` is not understood"),
             TokenizeError::UnclosedString => write!(f, "newline was found before string was closed"),
             TokenizeError::IO(io) => write!(f, "{io}"),
             TokenizeError::Regex(re) => write!(f, "{re}"),
@@ -149,7 +152,7 @@ impl Token {
 /// Tokenize an input stream of source code for a Parser
 pub(crate) struct Tokenizer<R: BufRead> {
     reader: R,
-    tokens: VecDeque<Token>,
+    tokens: VecDeque<Result<Token, TokenizeError>>,
 }
 
 impl<R: BufRead> Tokenizer<R> {
@@ -157,6 +160,72 @@ impl<R: BufRead> Tokenizer<R> {
         Self {
             reader,
             tokens: VecDeque::new(),
+        }
+    }
+
+    /// Tokenizes more input and adds them to the internal queue
+    fn tokenize<I: Iterator<Item = char>>(&mut self, mut iter: Peekable<I>) {
+        const OPERATOR_CHARS: &'static str = "!@$%^&*()-=+[]{}|;:,<.>/?";
+
+        let c = if let Some(c) = iter.next() {
+            c
+        } else {
+            return;
+        };
+
+        if c.is_alphanumeric() || c == '.' {
+            let mut token = String::from(c);
+
+            while let Some(c) = iter.next_if(|&c| c.is_alphanumeric() || c == '.' || c == '\'') {
+                token.push(c);
+            }
+
+            self.tokens.push_back(Token::parse(&token));
+            self.tokenize(iter)
+        } else if OPERATOR_CHARS.contains(c) {
+            let mut token = String::from(c);
+
+            while let Some(c) = iter.next_if(|&c| OPERATOR_CHARS.contains(c)) {
+                token.push(c);
+            }
+
+            self.tokens.push_back(Token::parse(&token));
+            self.tokenize(iter)
+        } else if c == '#' {
+            // consume comments
+            let _: String = iter.by_ref().take_while(|&c| c != '\n').collect();
+        } else if c == '\"' {
+            let mut token = String::new();
+
+            while let Some(c) = iter.next() {
+                match c {
+                    '"' => break,
+                    '\n' => {
+                        self.tokens.push_back(Err(TokenizeError::UnclosedString));
+                        return;
+                    }
+                    '\\' => match iter.next() {
+                        Some('\\') => token.push('\\'),
+                        Some('n') => token.push('\n'),
+                        Some('t') => token.push('\t'),
+                        Some('r') => token.push('\r'),
+                        Some('\"') => token.push('"'),
+                        Some(c) => token.push(c),
+                        None => {
+                            self.tokens.push_back(Err(TokenizeError::UnclosedString));
+                            return;
+                        },
+                    }
+                    _ => token.push(c),
+                }
+            }
+
+            self.tokens.push_back(Ok(Token::Constant(Value::String(token))));
+            self.tokenize(iter)
+        } else if c.is_whitespace() {
+            self.tokenize(iter)
+        } else {
+            self.tokens.push_back(Err(TokenizeError::InvalidCharacter(c)));
         }
     }
 }
@@ -175,21 +244,18 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(token) = self.tokens.pop_front() {
-            return Some(Ok(token));
+            return Some(token);
         }
 
         let mut input = String::new();
 
         match self.reader.read_line(&mut input) {
             Ok(0) => None,
+            Ok(_n) => {
+                self.tokenize(input.chars().peekable());
+                self.next()
+            },
             Err(e) => Some(Err(TokenizeError::IO(e))),
-            _ => {
-                let mut buffer = String::new();
-
-                for c in input.chars() {
-
-                }
-            }
         }
     }
 }
@@ -201,7 +267,7 @@ mod tests {
 
     #[test]
     fn tokenizer() {
-        let program = "\"hello\nworld\"";
+        let program = ": function x ** x 2 function 1200";
 
         let tok = Tokenizer::from_str(program).unwrap();
         let tokens: Vec<Token> = tok.collect::<Result<_, TokenizeError>>().expect("tokenizer error");
