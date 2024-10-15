@@ -174,7 +174,7 @@ impl<R: BufRead> Tokenizer<R> {
             return;
         };
 
-        if c.is_alphanumeric() || c == '.' {
+        if c.is_alphanumeric() {
             let mut token = String::from(c);
 
             while let Some(c) = iter.next_if(|&c| c.is_alphanumeric() || c == '.' || c == '\'') {
