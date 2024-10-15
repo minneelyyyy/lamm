@@ -326,7 +326,7 @@ where
             ParseTree::StringCast(x) => Ok(Value::String(format!("{}", self.exec(x, locals)?))),
             ParseTree::Print(x) => match self.exec(x, locals)? {
                 x => {
-                    writeln!(self.stdout, "{x}").map_err(|e| RuntimeError::IO(e));
+                    writeln!(self.stdout, "{x}").map_err(|e| RuntimeError::IO(e))?;
                     Ok(Value::Nil)
                 }
             }

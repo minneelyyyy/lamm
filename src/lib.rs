@@ -3,8 +3,12 @@ mod tokenizer;
 mod parser;
 mod executor;
 
+use executor::{Executor, RuntimeError};
+use parser::Parser;
+use tokenizer::Tokenizer;
+
 use std::fmt::Display;
-use std::io::BufRead;
+use std::io::{Write, Read, BufRead};
 
 #[derive(Clone, Debug)]
 pub enum Type {
@@ -72,6 +76,30 @@ pub(crate) struct FunctionDeclaration {
     args: Vec<(String, Type)>,
 }
 
-pub fn evaluate<R: BufRead>(r: R) -> impl Iterator<Item = Result<Value, executor::RuntimeError>> {
-    executor::Executor::new(parser::Parser::new(tokenizer::Tokenizer::new(r)))
+pub struct Runtime<'a, R: BufRead> {
+    inner: executor::Executor<'a, parser::Parser<tokenizer::Tokenizer<R>>>
+}
+
+impl<'a, R: BufRead> Runtime<'a, R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            inner: Executor::new(Parser::new(Tokenizer::new(reader)))
+        }
+    }
+
+    pub fn stdout(self, stdout: impl Write + 'a) -> Self {
+        Self {
+            inner: self.inner.stdout(stdout)
+        }
+    }
+
+    pub fn stdin(self, stdin: impl Read + 'a) -> Self {
+        Self {
+            inner: self.inner.stdin(stdin)
+        }
+    }
+
+    pub fn values(self) -> impl Iterator<Item = Result<Value, RuntimeError>> + use<'a, R> {
+        self.inner
+    }
 }

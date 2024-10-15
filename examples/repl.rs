@@ -1,7 +1,9 @@
 use std::io::{self, BufReader};
 
 fn main() {
-	for value in lamm::evaluate(BufReader::new(io::stdin())) {
+	let runtime = lamm::Runtime::new(BufReader::new(io::stdin()));
+
+	for value in runtime.values() {
 		match value {
 			Ok(v) => println!("{v}"),
 			Err(e) => eprintln!("{e}"),
