@@ -1,0 +1,19 @@
+name: Trigger Bot Build
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  trigger-bot-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository dispatch
+        env:
+          GITHUB_TOKEN: ${{ secrets.LAMM_TOKEN }}
+        run: |
+          curl -X POST -H "Accept: application/vnd.github.everest-preview+json" \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          https://api.github.com/repos/minneelyyyy/bot/dispatches \
+          -d '{"event_type": "lamm-updated"}'
