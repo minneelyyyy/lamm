@@ -80,7 +80,7 @@ pub struct Runtime<'a, R: BufRead> {
     inner: executor::Executor<'a, parser::Parser<tokenizer::Tokenizer<R>>>
 }
 
-impl<'a, R: BufRead> Runtime<'a, R> {
+impl<'a, R: BufRead + 'a> Runtime<'a, R> {
     pub fn new(reader: R) -> Self {
         Self {
             inner: Executor::new(Parser::new(Tokenizer::new(reader)))
@@ -99,7 +99,7 @@ impl<'a, R: BufRead> Runtime<'a, R> {
         }
     }
 
-    pub fn values(self) -> impl Iterator<Item = Result<Value, RuntimeError>> + use<'a, R> {
+    pub fn values(self) -> impl Iterator<Item = Result<Value, RuntimeError>> + 'a {
         self.inner
     }
 }
