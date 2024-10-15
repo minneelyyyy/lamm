@@ -242,9 +242,13 @@ impl ParseTree {
                                     _ => true,
                                 }).collect::<Vec<Result<_, TokenizeError>>>().into_iter();
 
-                                let parser: Vec<ParseTree> = Parser::new(&mut array_tokens).collect::<Result<_, ParseError>>()?;
+                                let mut trees: Vec<ParseTree> = vec![];
+                                
+                                while let Ok(tree) = ParseTree::parse(&mut array_tokens, globals, locals) {
+                                    trees.push(tree);
+                                }
 
-                                let tree = parser.iter().fold(
+                                let tree = trees.iter().fold(
                                     ParseTree::Constant(Value::Array(vec![])),
                                     |acc, x| ParseTree::Add(Box::new(acc), Box::new(x.clone())),
                                 );
