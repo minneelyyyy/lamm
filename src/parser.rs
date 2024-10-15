@@ -47,11 +47,14 @@ pub(crate) enum ParseTree {
 
     // Boolean Operations
     EqualTo(Box<ParseTree>, Box<ParseTree>),
+    NotEqualTo(Box<ParseTree>, Box<ParseTree>),
     GreaterThan(Box<ParseTree>, Box<ParseTree>),
     GreaterThanOrEqualTo(Box<ParseTree>, Box<ParseTree>),
     LessThan(Box<ParseTree>, Box<ParseTree>),
     LessThanOrEqualTo(Box<ParseTree>, Box<ParseTree>),
     Not(Box<ParseTree>),
+    And(Box<ParseTree>, Box<ParseTree>),
+    Or(Box<ParseTree>, Box<ParseTree>),
 
     // Defining Objects
     Equ(String, Box<ParseTree>, Box<ParseTree>),
@@ -81,6 +84,30 @@ pub(crate) enum ParseTree {
     Print(Box<ParseTree>),
 }
 
+macro_rules! one_arg {
+    ($op:ident, $tokens:ident, $globals:ident, $locals:ident) => {
+        Ok(ParseTree::$op(
+            Box::new(ParseTree::parse($tokens, $globals, $locals)?)
+    ))}
+}
+
+macro_rules! two_arg {
+    ($op:ident, $tokens:ident, $globals:ident, $locals:ident) => {
+        Ok(ParseTree::$op(
+            Box::new(ParseTree::parse($tokens, $globals, $locals)?),
+            Box::new(ParseTree::parse($tokens, $globals, $locals)?)
+    ))}
+}
+
+macro_rules! three_arg {
+    ($op:ident, $tokens:ident, $globals:ident, $locals:ident) => {
+        Ok(ParseTree::$op(
+            Box::new(ParseTree::parse($tokens, $globals, $locals)?),
+            Box::new(ParseTree::parse($tokens, $globals, $locals)?),
+            Box::new(ParseTree::parse($tokens, $globals, $locals)?)
+    ))}
+}
+
 impl ParseTree {
     fn parse<I>(
         tokens: &mut I,
@@ -108,30 +135,12 @@ impl ParseTree {
                     }
                     Token::Operator(op) => {
                         match op {
-                            Op::Add => Ok(ParseTree::Add(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::Sub => Ok(ParseTree::Sub(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::Mul => Ok(ParseTree::Mul(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::Div => Ok(ParseTree::Div(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::Exp => Ok(ParseTree::Exp(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::Mod => Ok(ParseTree::Mod(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
+                            Op::Add => two_arg!(Add, tokens, globals, locals),
+                            Op::Sub => two_arg!(Sub, tokens, globals, locals),
+                            Op::Mul => two_arg!(Mul, tokens, globals, locals),
+                            Op::Div => two_arg!(Div, tokens, globals, locals),
+                            Op::Exp => two_arg!(Exp, tokens, globals, locals),
+                            Op::Mod => two_arg!(Mod, tokens, globals, locals),
                             Op::Equ | Op::LazyEqu => {
                                 let token = tokens.next()
                                     .ok_or(ParseError::UnexpectedEndInput)?
@@ -183,48 +192,21 @@ impl ParseTree {
                                         Err(ParseError::InvalidIdentifier)
                                     }
                             }
-                            Op::Compose => Ok(ParseTree::Compose(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::Id => Ok(ParseTree::Id(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::If => Ok(ParseTree::If(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::IfElse => Ok(ParseTree::IfElse(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::EqualTo => Ok(ParseTree::EqualTo(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::GreaterThan => Ok(ParseTree::GreaterThan(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::LessThan => Ok(ParseTree::LessThan(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::GreaterThanOrEqualTo => Ok(ParseTree::GreaterThanOrEqualTo(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::LessThanOrEqualTo => Ok(ParseTree::LessThanOrEqualTo(
-                                Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                Box::new(ParseTree::parse(tokens, globals, locals)?)
-                            )),
-                            Op::Not => Ok(ParseTree::Not(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::IntCast => Ok(ParseTree::IntCast(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::FloatCast => Ok(ParseTree::FloatCast(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::BoolCast => Ok(ParseTree::BoolCast(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::StringCast => Ok(ParseTree::StringCast(Box::new(ParseTree::parse(tokens, globals, locals)?))),
-                            Op::Print => Ok(ParseTree::Print(Box::new(ParseTree::parse(tokens, globals, locals)?))),
+                            Op::Compose => two_arg!(Compose, tokens, globals, locals),
+                            Op::Id => one_arg!(Id, tokens, globals, locals),
+                            Op::If => two_arg!(If, tokens, globals, locals),
+                            Op::IfElse => three_arg!(IfElse, tokens, globals, locals),
+                            Op::EqualTo => two_arg!(EqualTo, tokens, globals, locals),
+                            Op::GreaterThan => two_arg!(GreaterThan, tokens, globals, locals),
+                            Op::LessThan => two_arg!(LessThan, tokens, globals, locals),
+                            Op::GreaterThanOrEqualTo => two_arg!(GreaterThanOrEqualTo, tokens, globals, locals),
+                            Op::LessThanOrEqualTo => two_arg!(LessThanOrEqualTo, tokens, globals, locals),
+                            Op::Not => one_arg!(Not, tokens, globals, locals),
+                            Op::IntCast => one_arg!(IntCast, tokens, globals, locals),
+                            Op::FloatCast => one_arg!(FloatCast, tokens, globals, locals),
+                            Op::BoolCast => one_arg!(BoolCast, tokens, globals, locals),
+                            Op::StringCast => one_arg!(StringCast, tokens, globals, locals),
+                            Op::Print => one_arg!(Print, tokens, globals, locals),
                             Op::OpenArray => {
                                 let mut depth = 1;
 
@@ -258,6 +240,9 @@ impl ParseTree {
                             }
                             Op::Empty => Ok(ParseTree::Constant(Value::Array(vec![]))),
                             Op::CloseArray => Err(ParseError::UnmatchedArrayClose),
+                            Op::NotEqualTo => two_arg!(NotEqualTo, tokens, globals, locals),
+                            Op::And => two_arg!(And, tokens, globals, locals),
+                            Op::Or => two_arg!(Or, tokens, globals, locals),
                         }
                     }
                 }

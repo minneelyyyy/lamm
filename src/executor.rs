@@ -165,6 +165,15 @@ where
                 (Value::String(x), Value::String(y)) => Ok(Value::Bool(x == y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("==".into(), vec![x, y])),
             },
+            ParseTree::NotEqualTo(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+                (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x != y)),
+                (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(x as f64 != y)),
+                (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x != y as f64)),
+                (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x != y)),
+                (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(x != y)),
+                (Value::String(x), Value::String(y)) => Ok(Value::Bool(x != y)),
+                (x, y) => Err(RuntimeError::NoOverloadForTypes("!=".into(), vec![x, y])),
+            },
             ParseTree::GreaterThan(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x > y)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(x as f64 > y)),
@@ -196,6 +205,14 @@ where
             ParseTree::Not(x) => match self.exec(x, locals)? {
                 Value::Bool(x) => Ok(Value::Bool(!x)),
                 x => Err(RuntimeError::NoOverloadForTypes("not".into(), vec![x]))
+            },
+            ParseTree::And(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+                (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(x && y)),
+                (x, y) => Err(RuntimeError::NoOverloadForTypes("&&".into(), vec![x, y]))
+            },
+            ParseTree::Or(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+                (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(x || y)),
+                (x, y) => Err(RuntimeError::NoOverloadForTypes("||".into(), vec![x, y]))
             },
             ParseTree::Equ(ident, body, scope) => {
                 if self.globals.contains_key(&ident) || locals.contains_key(&ident) {

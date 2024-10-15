@@ -57,6 +57,7 @@ pub(crate) enum Op {
     GreaterThan,
     LessThan,
     EqualTo,
+    NotEqualTo,
     GreaterThanOrEqualTo,
     LessThanOrEqualTo,
     Not,
@@ -68,6 +69,8 @@ pub(crate) enum Op {
     OpenArray,
     CloseArray,
     Empty,
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone)]
@@ -101,7 +104,6 @@ impl Token {
             // Match keywords first
             "true"  => Ok(Token::Constant(Value::Bool(true))),
             "false" => Ok(Token::Constant(Value::Bool(false))),
-            "not"   => Ok(Token::Operator(Op::Not)),
             "int"    => Ok(Token::Operator(Op::IntCast)),
             "float"  => Ok(Token::Operator(Op::FloatCast)),
             "bool"   => Ok(Token::Operator(Op::BoolCast)),
@@ -164,8 +166,12 @@ impl<R: BufRead> Tokenizer<R> {
             (">=", Op::GreaterThanOrEqualTo),
             ("<=", Op::LessThanOrEqualTo),
             ("==", Op::EqualTo),
+            ("!=", Op::NotEqualTo),
             ("[", Op::OpenArray),
             ("]", Op::CloseArray),
+            ("!", Op::Not),
+            ("&&", Op::And),
+            ("||", Op::Or),
         ]);
 
         let c = if let Some(c) = iter.next() {
@@ -217,11 +223,15 @@ impl<R: BufRead> Tokenizer<R> {
             let mut token = String::from(c);
 
             loop {
+                // get a list of all tokens this current token could possibly be
                 let possible: HashMap<&'static str, Op> = operators
                     .clone().into_iter()
                     .filter(|(key, _)| key.starts_with(&token))
                     .collect();
 
+                // checks if a character is "expected", aka based on how many chars
+                // we have eaten so far, which characters out of the current nominees
+                // are expected in the next position
                 let is_expected = |c: &char|
                     possible.iter().any(|(op, _)| match op.chars().nth(token.len()) {
                         Some(i) => *c == i,
@@ -230,20 +240,37 @@ impl<R: BufRead> Tokenizer<R> {
 
                 match possible.len() {
                     1 => {
-                        self.tokens.push_back(Ok(Token::Operator(match possible.get(token.as_str()).unwrap().clone() {
-                            Op::FunctionDeclare(n) => {
-                                let count = match get_dot_count(&mut iter) {
-                                    Some(count) => count,
-                                    None => {
-                                        self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
-                                        return;
-                                    }
-                                };
-                                Op::FunctionDeclare(n + count)
-                            }
-                            op => op,
-                        })));
-                        break;
+                        // if the current operator exists in possible, we push it
+                        // if not, we need to make sure that the next characters
+                        // we grab *actually* match the last operator
+                        if let Some(op) = possible.get(token.as_str()) {
+                            self.tokens.push_back(Ok(Token::Operator(match op {
+                                // special handling for "dynamic" operators
+                                Op::FunctionDeclare(n) => {
+                                    let count = match get_dot_count(&mut iter) {
+                                        Some(count) => count,
+                                        None => {
+                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                            return;
+                                        }
+                                    };
+                                    Op::FunctionDeclare(n + count)
+                                }
+                                op => op.clone(),
+                            })));
+
+                            break;
+                        } else {
+                            let next = match iter.next_if(is_expected) {
+                                Some(c) => c,
+                                None => {
+                                    self.tokens.push_back(Err(TokenizeError::UnableToMatchToken(format!("{token}"))));
+                                    return;
+                                }
+                            };
+    
+                            token.push(next);
+                        }
                     }
                     0 => unreachable!(),
                     _ => {
