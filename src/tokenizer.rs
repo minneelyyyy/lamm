@@ -245,10 +245,7 @@ impl<R: BufRead> Tokenizer<R> {
                         })));
                         break;
                     }
-                    0 => {
-                        self.tokens.push_back(Err(TokenizeError::InvalidCharacter(c)));
-                        return;
-                    }
+                    0 => unreachable!(),
                     _ => {
                         let next = match iter.next_if(is_expected) {
                             Some(c) => c,
