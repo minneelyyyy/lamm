@@ -242,7 +242,13 @@ impl ParseTree {
                             Op::NotEqualTo => two_arg!(NotEqualTo, tokens, globals, locals),
                             Op::And => two_arg!(And, tokens, globals, locals),
                             Op::Or => two_arg!(Or, tokens, globals, locals),
-                            Op::LambdaDefine(_arg_count) => todo!(),
+                            Op::LambdaDefine(arg_count) => {
+                                let mut f = ParseTree::parse_function(tokens, arg_count)?;
+
+                                f.body = Some(Box::new(ParseTree::parse(tokens, globals, locals)?));
+
+                                Ok(ParseTree::LambdaDefinition(f))
+                            }
                             Op::NonCall => todo!(),
                             op => Err(ParseError::UnwantedToken(Token::Operator(op))),
                         }
