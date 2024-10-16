@@ -352,7 +352,7 @@ where
                     Ok(Value::Nil)
                 }
             }
-            ParseTree::LambdaDefinition(func) => todo!(),
+            ParseTree::LambdaDefinition(func) => Ok(Value::Function(func)),
         }
     }
 }

@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn uwu() {
-        let program = ":. add x y + x y";
+        let program = ": id ?. x Any -> Any x id 5";
 
         let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, TokenizeError>>().unwrap();
 
