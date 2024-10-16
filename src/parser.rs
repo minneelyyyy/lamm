@@ -1,4 +1,4 @@
-use super::{Type, Value, FunctionDeclaration};
+use super::{Value, Type, Function, FunctionType};
 use super::tokenizer::{Token, TokenizeError, Op};
 
 use std::error;
@@ -15,7 +15,9 @@ pub enum ParseError {
     FunctionUndefined(String),
     VariableUndefined(String),
     UnmatchedArrayClose,
+    UnwantedToken(Token),
     TokenizeError(TokenizeError),
+    ImmutableError(String),
 }
 
 impl Display for ParseError {
@@ -28,14 +30,16 @@ impl Display for ParseError {
             ParseError::VariableUndefined(name) => write!(f, "Undefined variable `{name}`"),
             ParseError::NoInput => write!(f, "No input given"),
             ParseError::UnmatchedArrayClose => write!(f, "there was an unmatched array closing operator `]`"),
-            ParseError::TokenizeError(e) => write!(f, "{e}"),
+            ParseError::TokenizeError(e) => write!(f, "Tokenizer Error: {e}"),
+            ParseError::ImmutableError(i) => write!(f, "attempt to redeclare {i} met with force"),
+            ParseError::UnwantedToken(_t) => write!(f, "unexpected token"),
         }
     }
 }
 
 impl error::Error for ParseError {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ParseTree {
     // Mathematical Operators
     Add(Box<ParseTree>, Box<ParseTree>),
@@ -59,7 +63,9 @@ pub(crate) enum ParseTree {
     // Defining Objects
     Equ(String, Box<ParseTree>, Box<ParseTree>),
     LazyEqu(String, Box<ParseTree>, Box<ParseTree>),
-    FunctionDefinition(String, Vec<String>, Box<ParseTree>, Box<ParseTree>),
+    FunctionDefinition(Function, Box<ParseTree>),
+    FunctionDeclaration(Function, Box<ParseTree>),
+    LambdaDefinition(Function),
 
     // Functional Operations
     Compose(Box<ParseTree>, Box<ParseTree>),
@@ -111,8 +117,8 @@ macro_rules! three_arg {
 impl ParseTree {
     fn parse<I>(
         tokens: &mut I,
-        globals: &HashMap<String, FunctionDeclaration>,
-        locals: &mut Cow<HashMap<String, FunctionDeclaration>>) -> Result<Self, ParseError>
+        globals: &HashMap<String, Function>,
+        locals: &mut Cow<HashMap<String, Function>>) -> Result<Self, ParseError>
     where
         I: Iterator<Item = Result<Token, TokenizeError>>,
     {
@@ -124,8 +130,8 @@ impl ParseTree {
                         // If it is found to be a function, get its argument count.
                         // During parsing, we only keep track of function definitions
                         // so that we know how many arguments it takes
-                        if let Some(decl) = locals.clone().get(&ident).or(globals.clone().get(&ident)) {
-                            let args = decl.args.iter()
+                        if let Some(f) = locals.clone().get(&ident).or(globals.clone().get(&ident)) {
+                            let args = f.t.1.iter()
                                 .map(|_| ParseTree::parse(tokens, globals, locals)).collect::<Result<Vec<_>, ParseError>>()?;
 
                             Ok(ParseTree::FunctionCall(ident.clone(), args))
@@ -162,35 +168,59 @@ impl ParseTree {
                                     Err(ParseError::InvalidIdentifier)
                                 }
                             }
-                            Op::FunctionDeclare(nargs) => {
+                            Op::FunctionDefine(nargs) => {
                                 let token = tokens.next()
                                     .ok_or(ParseError::UnexpectedEndInput)?
                                     .map_err(|e| ParseError::TokenizeError(e))?;
 
-                                    if let Token::Identifier(ident) = token {
-                                        let args: Vec<String> = tokens.take(nargs)
-                                            .map(|token| match token {
-                                                Ok(Token::Identifier(ident)) => Ok(ident),
-                                                Ok(_) => Err(ParseError::InvalidIdentifier),
-                                                Err(e) => Err(ParseError::TokenizeError(e)),
-                                            })
-                                            .collect::<Result<Vec<_>, ParseError>>()?;
+                                if let Token::Identifier(ident) = token {
+                                    let args: Vec<String> = tokens.take(nargs)
+                                        .map(|token| match token {
+                                            Ok(Token::Identifier(ident)) => Ok(ident),
+                                            Ok(_) => Err(ParseError::InvalidIdentifier),
+                                            Err(e) => Err(ParseError::TokenizeError(e)),
+                                        })
+                                        .collect::<Result<Vec<_>, ParseError>>()?;
+
+                                    let f = if locals.contains_key(&ident) {
+                                        let locals = locals.to_mut();
+                                        let f = locals.get(&ident).unwrap();
+                                        let f = f.clone();
+
+                                        // iterate over f's types and push them
+                                        for (t, name) in std::iter::zip(f.t.1.clone(), args.clone()) {
+                                            match t {
+                                                Type::Function(finner) => {
+                                                    locals.insert(name.clone(), Function::named(&name, finner, None, None));
+                                                }
+                                                _ => (),
+                                            }
+                                        }
+
+                                        Function::named(
+                                            &ident,
+                                            f.t.clone(),
+                                            Some(args),
+                                            Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?)))
+                                    } else {
+                                        let f = Function::named(
+                                            &ident,
+                                            FunctionType(Box::new(Type::Any), args.iter().map(|_| Type::Any).collect()),
+                                            Some(args),
+                                            Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?)));
 
                                         let locals = locals.to_mut();
 
-                                        locals.insert(ident.clone(), FunctionDeclaration {
-                                            _name: ident.clone(),
-                                            args: args.clone(),
-                                        });
+                                        locals.insert(ident.clone(), f.clone());
 
-                                        Ok(ParseTree::FunctionDefinition(
-                                            ident,
-                                            args,
-                                            Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&*locals))?),
-                                            Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&*locals))?)))
-                                    } else {
-                                        Err(ParseError::InvalidIdentifier)
-                                    }
+                                        f
+                                    };
+
+                                    Ok(ParseTree::FunctionDefinition(f,
+                                        Box::new(ParseTree::parse(tokens, globals, locals)?)))
+                                } else {
+                                    Err(ParseError::InvalidIdentifier)
+                                }
                             }
                             Op::Compose => two_arg!(Compose, tokens, globals, locals),
                             Op::Id => one_arg!(Id, tokens, globals, locals),
@@ -232,23 +262,117 @@ impl ParseTree {
                                     .collect::<Result<_, ParseError>>()?;
 
                                 let tree = trees.into_iter().fold(
-                                    ParseTree::Constant(Value::Array(vec![])),
+                                    ParseTree::Constant(Value::Array(Type::Any, vec![])),
                                     |acc, x| ParseTree::Add(Box::new(acc), Box::new(x.clone())),
                                 );
 
                                 Ok(tree)
                             }
-                            Op::Empty => Ok(ParseTree::Constant(Value::Array(vec![]))),
+                            Op::Empty => Ok(ParseTree::Constant(Value::Array(Type::Any, vec![]))),
                             Op::CloseArray => Err(ParseError::UnmatchedArrayClose),
                             Op::NotEqualTo => two_arg!(NotEqualTo, tokens, globals, locals),
                             Op::And => two_arg!(And, tokens, globals, locals),
                             Op::Or => two_arg!(Or, tokens, globals, locals),
+                            Op::FunctionDeclare(arg_count) => {
+                                let name = match tokens.next()
+                                    .ok_or(ParseError::UnexpectedEndInput)?
+                                    .map_err(|e| ParseError::TokenizeError(e))?
+                                {
+                                        Token::Identifier(x) => x,
+                                        _ => return Err(ParseError::InvalidIdentifier),
+                                };
+
+                                let args: Vec<Type> = (0..arg_count)
+                                    .map(|_| Self::parse_type(tokens))
+                                    .collect::<Result<_, ParseError>>()?;
+
+                                let rett = Self::parse_type(tokens)?;
+
+                                if locals.contains_key(&name) {
+                                    println!("{name} already found: {locals:?}");
+                                    return Err(ParseError::ImmutableError(name.clone()));
+                                }
+
+                                let f = Function::named(
+                                    &name,
+                                    FunctionType(Box::new(rett), args),
+                                    None,
+                                    None);
+
+                                let locals = locals.to_mut();
+
+                                locals.insert(name, f.clone());
+
+                                Ok(ParseTree::FunctionDeclaration(
+                                    f,
+                                    Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&*locals))?)))
+                            }
+                            Op::LambdaDefine(arg_count) => {
+                                let args: Vec<String> = tokens.take(arg_count)
+                                    .map(|token| match token {
+                                        Ok(Token::Identifier(ident)) => Ok(ident),
+                                        Ok(_) => Err(ParseError::InvalidIdentifier),
+                                        Err(e) => Err(ParseError::TokenizeError(e)),
+                                    })
+                                    .collect::<Result<Vec<_>, ParseError>>()?;
+
+                                Ok(ParseTree::LambdaDefinition(
+                                    Function::lambda(
+                                        FunctionType(Box::new(Type::Any), args.clone().into_iter().map(|_| Type::Any).collect()),
+                                        args,
+                                        Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&*locals))?)))))
+                            }
+                            Op::NonCall => {
+                                let ident = match tokens.next().ok_or(ParseError::UnexpectedEndInput)?
+                                    .map_err(|e| ParseError::TokenizeError(e))?
+                                {
+                                    Token::Identifier(x) => x,
+                                    _ => return Err(ParseError::InvalidIdentifier),
+                                };
+
+                                if let Some(f) = locals.clone().get(&ident).or(globals.clone().get(&ident)).cloned() {
+                                    Ok(ParseTree::Constant(Value::Function(f)))
+                                } else {
+                                    Err(ParseError::FunctionUndefined(ident.clone()))
+                                }
+                            }
                         }
                     }
+                    t => Err(ParseError::UnwantedToken(t)),
                 }
             },
             Some(Err(e)) => Err(ParseError::TokenizeError(e)),
             None => Err(ParseError::NoInput),
+        }
+    }
+
+    fn parse_type<I>(tokens: &mut I) -> Result<Type, ParseError>
+    where
+        I: Iterator<Item = Result<Token, TokenizeError>>,
+    {
+        match tokens.next() {
+            Some(Ok(Token::Type(t))) => Ok(t),
+            Some(Ok(Token::Operator(Op::FunctionDefine(n)))) => {
+                let args: Vec<Type> = (0..n)
+                    .map(|_| Self::parse_type(tokens))
+                    .collect::<Result<_, ParseError>>()?;
+
+                let rett = Self::parse_type(tokens)?;
+
+                Ok(Type::Function(FunctionType(Box::new(rett), args.clone())))
+            },
+            Some(Ok(Token::Operator(Op::OpenArray))) => {
+                let t = Self::parse_type(tokens)?;
+                let _ = match tokens.next() {
+                    Some(Ok(Token::Operator(Op::CloseArray))) => (),
+                    _ => return Err(ParseError::UnmatchedArrayClose),
+                };
+
+                Ok(Type::Array(Box::new(t)))
+            }
+            Some(Ok(t)) => Err(ParseError::UnwantedToken(t.clone())),
+            Some(Err(e)) => Err(ParseError::TokenizeError(e)),
+            None => Err(ParseError::UnexpectedEndInput),
         }
     }
 }
@@ -260,8 +384,8 @@ pub(crate) struct Parser<I: Iterator<Item = Result<Token, TokenizeError>>> {
     // These are used to keep track of functions in the current context
     // by the parser. otherwise the parser would have no way to tell
     // if the program `* a b 12` is supposed to be ((* a b) (12)) or (* (a b) 12)
-    globals: HashMap<String, FunctionDeclaration>,
-    locals: HashMap<String, FunctionDeclaration>,
+    globals: HashMap<String, Function>,
+    locals: HashMap<String, Function>,
 }
 
 impl<I: Iterator<Item = Result<Token, TokenizeError>>> Parser<I> {
@@ -273,7 +397,7 @@ impl<I: Iterator<Item = Result<Token, TokenizeError>>> Parser<I> {
         }
     }
 
-    pub fn globals(self, globals: HashMap<String, FunctionDeclaration>) -> Self {
+    pub fn globals(self, globals: HashMap<String, Function>) -> Self {
         Self {
             tokens: self.tokens,
             globals,
@@ -281,7 +405,7 @@ impl<I: Iterator<Item = Result<Token, TokenizeError>>> Parser<I> {
         }
     }
 
-    pub fn locals(self, locals: HashMap<String, FunctionDeclaration>) -> Self {
+    pub fn locals(self, locals: HashMap<String, Function>) -> Self {
         Self {
             tokens: self.tokens,
             globals: self.globals,

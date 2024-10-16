@@ -1,4 +1,4 @@
-use super::{Value, Type, FunctionDeclaration};
+use super::{Value, Type, Function, FunctionType};
 use super::parser::{ParseTree, ParseError};
 
 use std::collections::HashMap;
@@ -17,13 +17,14 @@ pub enum RuntimeError {
     FunctionUndefined(String),
     NotAVariable(String),
     ParseFail(String, Type),
+    TypeError(Type, Type),
     IO(io::Error),
 }
 
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ParseError(e) => write!(f, "{e}"),
+            Self::ParseError(e) => write!(f, "Parser Error: {e}"),
             Self::NoOverloadForTypes(op, values)
                 => write!(f, "No overload of `{op}` exists for the operands `[{}]`", 
                     values.iter().map(|x| format!("{}({x})", x.get_type())).collect::<Vec<_>>().join(", ")),
@@ -34,6 +35,7 @@ impl Display for RuntimeError {
             Self::NotAVariable(ident) => write!(f, "`{ident}` is a function but was attempted to be used like a variable"),
             Self::ParseFail(s, t) => write!(f, "`\"{s}\"` couldn't be parsed into {}", t),
             Self::IO(e) => write!(f, "{e}"),
+            Self::TypeError(left, right) => write!(f, "expected type `{left}` but got type `{right}`"),
         }
     }
 }
@@ -48,12 +50,6 @@ enum Evaluation {
     // at this point, it's type is unknown, and may contradict a variable's type
     // or not match the expected value of the expression, this is a runtime error
     Uncomputed(Box<ParseTree>),
-}
-
-#[derive(Clone, Debug)]
-struct Function {
-    decl: FunctionDeclaration,
-    body: Option<Box<ParseTree>>,
 }
 
 #[derive(Clone, Debug)]
@@ -116,8 +112,8 @@ where
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 + y)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x + y)),
                 (Value::String(x), Value::String(y)) => Ok(Value::String(format!("{x}{y}"))),
-                (Value::Array(x), y) => Ok(Value::Array([x, vec![y]].concat())),
-                (x, Value::Array(y)) => Ok(Value::Array([vec![x], y].concat())),
+                (Value::Array(_, x), y) => Ok(Value::Array(Type::Any, [x, vec![y]].concat())),
+                (x, Value::Array(_, y)) => Ok(Value::Array(Type::Any, [vec![x], y].concat())),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("+".into(), vec![x, y]))
             },
             ParseTree::Sub(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
@@ -235,19 +231,29 @@ where
                     self.exec(scope, &mut Cow::Borrowed(&locals))
                 }
             },
-            ParseTree::FunctionDefinition(ident, args, body, scope) => {
-                let existing = locals.get(&ident).or(self.globals.get(&ident)).cloned();
-
+            ParseTree::FunctionDefinition(func, scope) => {
+                let ident = func.name.clone().unwrap();
+                
+                let existing = locals.get(&ident)
+                    .or(self.globals.get(&ident));
+            
                 match existing {
-                    Some(_) => Err(RuntimeError::ImmutableError(ident.clone())),
+                    Some(Object::Function(f)) => {
+                        if f.body.is_some() || f.arg_names.is_some() {
+                            return Err(RuntimeError::ImmutableError(ident.clone()));
+                        }
+                    
+                        let new_func = Function::named(func.name.unwrap().as_str(), func.t.clone(), func.arg_names.clone(), func.body.clone());
+
+                        let locals = locals.to_mut();
+                        locals.insert(ident.clone(), Object::Function(new_func));
+
+                        self.exec(scope, &mut Cow::Borrowed(&locals))
+                    }
+                    Some(Object::Variable(_)) => Err(RuntimeError::ImmutableError(ident.clone())),
                     None => {
                         let locals = locals.to_mut();
-
-                        locals.insert(ident.clone(), Object::Function(Function {
-                            decl: FunctionDeclaration { _name: ident.clone(), args },
-                            body: Some(body)
-                        }));
-
+                        locals.insert(ident.clone(), Object::Function(func));
                         self.exec(scope, &mut Cow::Borrowed(&locals))
                     }
                 }
@@ -262,8 +268,9 @@ where
                     Value::Int(i) => i != 0,
                     Value::Bool(b) => b,
                     Value::String(s) => !s.is_empty(),
-                    Value::Array(vec) => !vec.is_empty(),
+                    Value::Array(_, vec) => !vec.is_empty(),
                     Value::Nil => false,
+                    x => return Err(RuntimeError::NoOverloadForTypes("?".into(), vec![x])),
                 } {
                     self.exec(body, locals)
                 } else {
@@ -274,8 +281,9 @@ where
                 Value::Int(i) => i != 0,
                 Value::Bool(b) => b,
                 Value::String(s) => !s.is_empty(),
-                Value::Array(vec) => !vec.is_empty(),
+                Value::Array(_, vec) => !vec.is_empty(),
                 Value::Nil => false,
+                x => return Err(RuntimeError::NoOverloadForTypes("?".into(), vec![x])),
             } {
                 self.exec(istrue, locals)
             } else {
@@ -284,17 +292,26 @@ where
             ParseTree::FunctionCall(ident, args) => {
                 let obj = locals.get(&ident).or(self.globals.get(&ident)).cloned();
 
-                if let Some(Object::Function(f)) = obj {
-                    let locals = locals.to_mut();
-                    let body = f.body.ok_or(RuntimeError::FunctionUndefined(ident.clone()))?;
+                match obj {
+                    Some(Object::Function(f)) => {
+                        let locals = locals.to_mut();
 
-                    for (name, tree) in std::iter::zip(f.decl.args, args) {
-                        locals.insert(name.clone(), Object::Variable(Evaluation::Computed(self.exec(Box::new(tree), &mut Cow::Borrowed(locals))?)));
+                        for ((t, name), tree) in std::iter::zip(std::iter::zip(f.t.1, f.arg_names.unwrap()), args) {
+                            let v = self.exec(Box::new(tree), &mut Cow::Borrowed(locals))?;
+
+                            if v.get_type() != t && t != Type::Any {
+                                return Err(RuntimeError::TypeError(t, v.get_type()));
+                            }
+
+                            locals.insert(name.clone(), match v {
+                                Value::Function(func) => Object::Function(func),
+                                _ => Object::Variable(Evaluation::Computed(v))
+                            });
+                        }
+
+                        self.exec(f.body.unwrap(), &mut Cow::Borrowed(&locals))
                     }
-
-                    self.exec(body, &mut Cow::Borrowed(&locals))
-                } else {
-                    Err(RuntimeError::FunctionUndeclared(ident.clone()))
+                    _ => Err(RuntimeError::FunctionUndefined(ident.clone()))
                 }
             },
             ParseTree::Variable(ident) => {
@@ -342,7 +359,7 @@ where
                 Value::Float(x) => Ok(Value::Bool(x != 0.0)),
                 Value::Bool(x) => Ok(Value::Bool(x)),
                 Value::String(x) => Ok(Value::Bool(!x.is_empty())),
-                Value::Array(vec) => Ok(Value::Bool(!vec.is_empty())),
+                Value::Array(_, vec) => Ok(Value::Bool(!vec.is_empty())),
                 x => Err(RuntimeError::NoOverloadForTypes("bool".into(), vec![x])),
             },
             ParseTree::StringCast(x) => Ok(Value::String(format!("{}", self.exec(x, locals)?))),
@@ -352,6 +369,18 @@ where
                     Ok(Value::Nil)
                 }
             }
+            ParseTree::FunctionDeclaration(func, scope) => {
+                let locals = locals.to_mut();
+                let name = func.name.clone().unwrap();
+
+                if locals.contains_key(&name) {
+                    Err(RuntimeError::ImmutableError(name.clone()))
+                } else {
+                    locals.insert(name, Object::Function(func));
+                    self.exec(scope, &mut Cow::Borrowed(&locals))
+                }
+            }
+            ParseTree::LambdaDefinition(func) => Ok(Value::Function(func)),
         }
     }
 }

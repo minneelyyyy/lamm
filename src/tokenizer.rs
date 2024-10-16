@@ -2,6 +2,8 @@ use std::iter::Peekable;
 use std::{error, io};
 use std::collections::{VecDeque, HashMap};
 
+use crate::Type;
+
 use super::Value;
 use std::fmt::{Display, Formatter};
 use std::io::{BufRead, Cursor};
@@ -49,7 +51,9 @@ pub(crate) enum Op {
     Equ,
     Mod,
     LazyEqu,
+    FunctionDefine(usize),
     FunctionDeclare(usize),
+    LambdaDefine(usize),
     Compose,
     Id,
     If,
@@ -71,6 +75,7 @@ pub(crate) enum Op {
     Empty,
     And,
     Or,
+    NonCall,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +83,7 @@ pub(crate) enum Token {
     Identifier(String),
     Operator(Op),
     Constant(Value),
+    Type(Type),
 }
 
 fn get_dot_count<I: Iterator<Item = char>>(s: &mut Peekable<I>) -> Option<usize> {
@@ -110,6 +116,13 @@ impl Token {
             "string" => Ok(Token::Operator(Op::StringCast)),
             "print" => Ok(Token::Operator(Op::Print)),
             "empty" => Ok(Token::Operator(Op::Empty)),
+
+            // Types
+            "Any" => Ok(Token::Type(Type::Any)),
+            "Int" => Ok(Token::Type(Type::Int)),
+            "Float" => Ok(Token::Type(Type::Float)),
+            "Bool" => Ok(Token::Type(Type::Bool)),
+            "String" => Ok(Token::Type(Type::String)),
 
             // then identifiers and numbers
             _ => {
@@ -156,7 +169,9 @@ impl<R: BufRead> Tokenizer<R> {
             ("%", Op::Mod),
             ("=", Op::Equ),
             (".", Op::LazyEqu),
-            (":", Op::FunctionDeclare(1)),
+            (":", Op::FunctionDefine(1)),
+            ("?:", Op::FunctionDeclare(1)),
+            (";", Op::LambdaDefine(1)),
             ("~", Op::Compose),
             (",", Op::Id),
             ("?", Op::If),
@@ -172,6 +187,7 @@ impl<R: BufRead> Tokenizer<R> {
             ("!", Op::Not),
             ("&&", Op::And),
             ("||", Op::Or),
+            ("'", Op::NonCall),
         ]);
 
         let c = if let Some(c) = iter.next() {
@@ -256,6 +272,26 @@ impl<R: BufRead> Tokenizer<R> {
                                     };
                                     Op::FunctionDeclare(n + count)
                                 }
+                                Op::FunctionDefine(n) => {
+                                    let count = match get_dot_count(&mut iter) {
+                                        Some(count) => count,
+                                        None => {
+                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                            return;
+                                        }
+                                    };
+                                    Op::FunctionDefine(n + count)
+                                }
+                                Op::LambdaDefine(n) => {
+                                    let count = match get_dot_count(&mut iter) {
+                                        Some(count) => count,
+                                        None => {
+                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                            return;
+                                        }
+                                    };
+                                    Op::LambdaDefine(n + count)
+                                }
                                 op => op.clone(),
                             })));
 
@@ -325,5 +361,27 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
             },
             Err(e) => Some(Err(TokenizeError::IO(e))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use crate::parser::{Parser, ParseTree, ParseError};
+
+    use super::*;
+
+    #[test]
+    fn uwu() {
+        let program = "?:. apply : Any Any Any Any :. apply f x f x : id x x apply ; x id x 12";
+
+        let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, TokenizeError>>().unwrap();
+
+        println!("{tokens:?}");
+
+        let trees: Result<Vec<ParseTree>, ParseError> = Parser::new(tokens.into_iter().map(|x| Ok(x))).collect();
+
+        println!("{trees:?}");
     }
 }

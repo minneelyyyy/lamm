@@ -3,11 +3,12 @@ mod parser;
 mod executor;
 
 use executor::{Executor, RuntimeError};
-use parser::Parser;
+use parser::{ParseTree, Parser};
 use tokenizer::Tokenizer;
 
 use std::fmt::Display;
 use std::io::{Write, Read, BufRead};
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
@@ -15,21 +16,21 @@ pub enum Type {
     Int,
     Bool,
     String,
-    Array,
-    _Function(Box<Type>, Vec<Type>),
+    Array(Box<Type>),
+    Function(FunctionType),
     Nil,
     Any,
 }
 
 impl Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", match self {
             Self::Float => "Float".into(),
             Self::Int => "Int".into(),
             Self::Bool => "Bool".into(),
             Self::String => "String".into(),
-            Self::Array => format!("Array"),
-            Self::_Function(r, _) => format!("Function -> {}", *r),
+            Self::Array(t) => format!("[{t}]"),
+            Self::Function(r) => format!("{r}"),
             Self::Nil => "Nil".into(),
             Self::Any => "Any".into(),
         })
@@ -43,7 +44,8 @@ pub enum Value {
     Int(i64),
     Bool(bool),
     String(String),
-    Array(Vec<Value>),
+    Array(Type, Vec<Value>),
+    Function(Function),
     Nil,
 }
 
@@ -54,8 +56,9 @@ impl Value {
             Self::Int(_) => Type::Int,
             Self::Bool(_) => Type::Bool,
             Self::String(_) => Type::String,
-            Self::Array(_) => Type::Array,
+            Self::Array(t, _) => Type::Array(Box::new(t.clone())),
             Self::Nil => Type::Nil,
+            Self::Function(f) => Type::Function(f.t.clone()),
         }
     }
 }
@@ -67,16 +70,54 @@ impl Display for Value {
             Self::Int(x) => write!(f, "{x}"),
             Self::Bool(x) => write!(f, "{}", if *x { "true" } else { "false" }),
             Self::String(x) => write!(f, "\"{x}\""),
-            Self::Array(v) => write!(f, "[{}]", v.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(" ")),
+            Self::Array(_t, v) => write!(f, "[{}]", v.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(" ")),
+            Self::Function(func) => {
+                if let Some(name) = &func.name {
+                    write!(f, "Function({}, {}, {})", name, func.t.0, func.t.1.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(", "))
+                } else {
+                    write!(f, "{}", func.t)
+                }
+            }
             Self::Nil => write!(f, "nil"),
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct FunctionDeclaration {
-    _name: String,
-    args: Vec<String>,
+#[derive(Clone, Debug, PartialEq)]
+pub struct FunctionType(Box<Type>, Vec<Type>);
+
+impl Display for FunctionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Function({}, {})", self.0, self.1.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(", "))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Function {
+    name: Option<String>,
+    t: FunctionType,
+    arg_names: Option<Vec<String>>,
+    body: Option<Box<ParseTree>>,
+}
+
+impl Function {
+    pub fn lambda(t: FunctionType, arg_names: Vec<String>, body: Option<Box<ParseTree>>) -> Self {
+        Self {
+            name: None,
+            t,
+            arg_names: Some(arg_names),
+            body
+        }
+    }
+
+    pub fn named(name: &str, t: FunctionType, arg_names: Option<Vec<String>>, body: Option<Box<ParseTree>>) -> Self {
+        Self {
+            name: Some(name.to_string()),
+            t,
+            arg_names,
+            body
+        }
+    }
 }
 
 pub struct Runtime<'a, R: BufRead> {
