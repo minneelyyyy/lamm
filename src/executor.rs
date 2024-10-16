@@ -232,31 +232,11 @@ where
                 }
             },
             ParseTree::FunctionDefinition(func, scope) => {
-                let ident = func.name.clone().unwrap();
-                
-                let existing = locals.get(&ident)
-                    .or(self.globals.get(&ident));
-            
-                match existing {
-                    Some(Object::Function(f)) => {
-                        if f.body.is_some() || f.arg_names.is_some() {
-                            return Err(RuntimeError::ImmutableError(ident.clone()));
-                        }
-                    
-                        let new_func = Function::named(func.name.unwrap().as_str(), func.t.clone(), func.arg_names.clone(), func.body.clone());
+                let locals = locals.to_mut();
 
-                        let locals = locals.to_mut();
-                        locals.insert(ident.clone(), Object::Function(new_func));
+                locals.insert(func.name.clone().unwrap(), Object::Function(func));
 
-                        self.exec(scope, &mut Cow::Borrowed(&locals))
-                    }
-                    Some(Object::Variable(_)) => Err(RuntimeError::ImmutableError(ident.clone())),
-                    None => {
-                        let locals = locals.to_mut();
-                        locals.insert(ident.clone(), Object::Function(func));
-                        self.exec(scope, &mut Cow::Borrowed(&locals))
-                    }
-                }
+                self.exec(scope, &mut Cow::Borrowed(&locals))
             },
             ParseTree::Compose(x, y) => {
                 self.exec(x, locals)?;
@@ -295,6 +275,9 @@ where
                 match obj {
                     Some(Object::Function(f)) => {
                         let locals = locals.to_mut();
+
+                        assert!(f.arg_names.is_some());
+                        assert!(f.body.is_some());
 
                         for ((t, name), tree) in std::iter::zip(std::iter::zip(f.t.1, f.arg_names.unwrap()), args) {
                             let v = self.exec(Box::new(tree), &mut Cow::Borrowed(locals))?;
@@ -369,18 +352,7 @@ where
                     Ok(Value::Nil)
                 }
             }
-            ParseTree::FunctionDeclaration(func, scope) => {
-                let locals = locals.to_mut();
-                let name = func.name.clone().unwrap();
-
-                if locals.contains_key(&name) {
-                    Err(RuntimeError::ImmutableError(name.clone()))
-                } else {
-                    locals.insert(name, Object::Function(func));
-                    self.exec(scope, &mut Cow::Borrowed(&locals))
-                }
-            }
-            ParseTree::LambdaDefinition(func) => Ok(Value::Function(func)),
+            ParseTree::LambdaDefinition(func) => todo!(),
         }
     }
 }

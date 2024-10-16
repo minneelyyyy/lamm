@@ -41,7 +41,7 @@ impl Display for TokenizeError {
 
 impl error::Error for TokenizeError {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Op {
     Add,
     Sub,
@@ -51,9 +51,11 @@ pub(crate) enum Op {
     Equ,
     Mod,
     LazyEqu,
+    TypeDeclaration,
     FunctionDefine(usize),
     FunctionDeclare(usize),
     LambdaDefine(usize),
+    Arrow,
     Compose,
     Id,
     If,
@@ -169,9 +171,11 @@ impl<R: BufRead> Tokenizer<R> {
             ("%", Op::Mod),
             ("=", Op::Equ),
             (".", Op::LazyEqu),
+            ("?.", Op::TypeDeclaration),
             (":", Op::FunctionDefine(1)),
             ("?:", Op::FunctionDeclare(1)),
             (";", Op::LambdaDefine(1)),
+            ("->", Op::Arrow),
             ("~", Op::Compose),
             (",", Op::Id),
             ("?", Op::If),
@@ -262,16 +266,6 @@ impl<R: BufRead> Tokenizer<R> {
                         if let Some(op) = possible.get(token.as_str()) {
                             self.tokens.push_back(Ok(Token::Operator(match op {
                                 // special handling for "dynamic" operators
-                                Op::FunctionDeclare(n) => {
-                                    let count = match get_dot_count(&mut iter) {
-                                        Some(count) => count,
-                                        None => {
-                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
-                                            return;
-                                        }
-                                    };
-                                    Op::FunctionDeclare(n + count)
-                                }
                                 Op::FunctionDefine(n) => {
                                     let count = match get_dot_count(&mut iter) {
                                         Some(count) => count,
@@ -281,6 +275,16 @@ impl<R: BufRead> Tokenizer<R> {
                                         }
                                     };
                                     Op::FunctionDefine(n + count)
+                                }
+                                Op::FunctionDeclare(n) => {
+                                    let count = match get_dot_count(&mut iter) {
+                                        Some(count) => count,
+                                        None => {
+                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                            return;
+                                        }
+                                    };
+                                    Op::FunctionDeclare(n + count)
                                 }
                                 Op::LambdaDefine(n) => {
                                     let count = match get_dot_count(&mut iter) {
@@ -314,7 +318,42 @@ impl<R: BufRead> Tokenizer<R> {
                             Some(c) => c,
                             None => {
                                 // at this point, token must be in the hashmap possible, otherwise it wouldnt have any matches
-                                self.tokens.push_back(Ok(Token::Operator(possible.get(token.as_str()).unwrap().clone())));
+                                self.tokens.push_back(Ok(Token::Operator(match possible.get(token.as_str()).unwrap() {
+                                    // special handling for "dynamic" operators
+                                    Op::FunctionDefine(n) => {
+                                        let count = match get_dot_count(&mut iter) {
+                                            Some(count) => count,
+                                            None => {
+                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                                return;
+                                            }
+                                        };
+                                        println!("{n} + {count}");
+    
+                                        Op::FunctionDefine(n + count)
+                                    }
+                                    Op::FunctionDeclare(n) => {
+                                        let count = match get_dot_count(&mut iter) {
+                                            Some(count) => count,
+                                            None => {
+                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                                return;
+                                            }
+                                        };
+                                        Op::FunctionDeclare(n + count)
+                                    }
+                                    Op::LambdaDefine(n) => {
+                                        let count = match get_dot_count(&mut iter) {
+                                            Some(count) => count,
+                                            None => {
+                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                                return;
+                                            }
+                                        };
+                                        Op::LambdaDefine(n + count)
+                                    }
+                                    op => op.clone(),
+                                })));
                                 break;
                             }
                         };
@@ -374,7 +413,7 @@ mod tests {
 
     #[test]
     fn uwu() {
-        let program = "?:. apply : Any Any Any Any :. apply f x f x : id x x apply ; x id x 12";
+        let program = ":. add x y + x y";
 
         let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, TokenizeError>>().unwrap();
 
