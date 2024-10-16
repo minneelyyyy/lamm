@@ -184,6 +184,16 @@ impl ParseTree {
                                 // recursion requires that f's prototype is present in locals
                                 locals.insert(f.name.clone().unwrap(), f.clone());
 
+                                // we also need any function aprameters in local scope
+                                for (name, t) in std::iter::zip(f.arg_names.clone().unwrap(), f.t.1.clone()) {
+                                    match t {
+                                        Type::Function(t) => {
+                                            locals.insert(name.clone(), Function::named(&name, t, None, None));
+                                        }
+                                        _ => (),
+                                    }
+                                }
+
                                 f.body = Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?));
                                 assert!(f.body.is_some());
 
