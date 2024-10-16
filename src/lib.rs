@@ -10,7 +10,7 @@ use std::fmt::Display;
 use std::io::{Write, Read, BufRead};
 use std::fmt;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Type {
     Float,
     Int,
@@ -20,6 +20,18 @@ pub enum Type {
     Function(FunctionType),
     Nil,
     Any,
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Type) -> bool {
+        match (self, other) {
+            (Self::Any, _) => true,
+            (_, Self::Any) => true,
+            (Self::Array(l0), Self::Array(r0)) => l0 == r0,
+            (Self::Function(l0), Self::Function(r0)) => l0 == r0,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
 }
 
 impl Display for Type {
