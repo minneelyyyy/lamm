@@ -33,7 +33,7 @@ impl Display for ParseError {
             ParseError::UnmatchedArrayClose => write!(f, "there was an unmatched array closing operator `]`"),
             ParseError::TokenizeError(e) => write!(f, "Tokenizer Error: {e}"),
             ParseError::ImmutableError(i) => write!(f, "attempt to redeclare {i} met with force"),
-            ParseError::UnwantedToken(_t) => write!(f, "unexpected token"),
+            ParseError::UnwantedToken(t) => write!(f, "unexpected token {t:?}"),
         }
     }
 }
@@ -197,8 +197,6 @@ impl ParseTree {
                                 f.body = Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?));
                                 assert!(f.body.is_some());
 
-                                println!("{:?} = {:?}", f.name, f);
-
                                 Ok(ParseTree::FunctionDefinition(f, Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?)))
                             },
                             Op::Compose => two_arg!(Compose, tokens, globals, locals),
@@ -253,7 +251,7 @@ impl ParseTree {
                             Op::And => two_arg!(And, tokens, globals, locals),
                             Op::Or => two_arg!(Or, tokens, globals, locals),
                             Op::LambdaDefine(arg_count) => {
-                                let mut f = ParseTree::parse_function(tokens, arg_count)?;
+                                let mut f = ParseTree::parse_lambda(tokens, arg_count)?;
 
                                 f.body = Some(Box::new(ParseTree::parse(tokens, globals, locals)?));
 
@@ -269,6 +267,14 @@ impl ParseTree {
             Some(Err(e)) => Err(ParseError::TokenizeError(e)),
             None => Err(ParseError::NoInput),
         }
+    }
+
+    fn parse_lambda<I>(tokens: &mut Peekable<I>, arg_count: usize) -> Result<Function, ParseError>
+    where
+        I: Iterator<Item = Result<Token, TokenizeError>>,
+    {
+        let (t, args) = Self::parse_function_declaration(tokens, arg_count)?;
+        Ok(Function::lambda(t, args, None))
     }
 
     fn parse_function<I>(tokens: &mut Peekable<I>, arg_count: usize) -> Result<Function, ParseError>
