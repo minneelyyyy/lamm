@@ -353,6 +353,24 @@ where
                 }
             }
             ParseTree::LambdaDefinition(func) => Ok(Value::Function(func)),
+            ParseTree::NonCall(name) => {
+                let locals = locals.to_mut();
+
+                let func = locals.get(&name).ok_or(RuntimeError::FunctionUndefined(name.clone())).cloned()?;
+
+                match func {
+                    Object::Function(func) => Ok(Value::Function(func.clone())),
+                    Object::Variable(var) => match var {
+                        Evaluation::Computed(value) => Ok(value.clone()),
+                        Evaluation::Uncomputed(tree) => {
+                            let v = self.exec(tree, &mut Cow::Borrowed(&locals))?;
+                            locals.insert(name, Object::Variable(Evaluation::Computed(v.clone())));
+
+                            Ok(v)
+                        }
+                    }
+                }
+            }
         }
     }
 }

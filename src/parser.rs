@@ -79,6 +79,7 @@ pub(crate) enum ParseTree {
     FunctionCall(String, Vec<ParseTree>),
     Variable(String),
     Constant(Value),
+    NonCall(String),
 
     // Type Casts
     IntCast(Box<ParseTree>),
@@ -257,7 +258,10 @@ impl ParseTree {
 
                                 Ok(ParseTree::LambdaDefinition(f))
                             }
-                            Op::NonCall => todo!(),
+                            Op::NonCall => {
+                                let name = Self::get_identifier(tokens.next())?;
+                                Ok(ParseTree::NonCall(name))
+                            },
                             op => Err(ParseError::UnwantedToken(Token::Operator(op))),
                         }
                     }

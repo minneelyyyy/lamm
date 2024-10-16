@@ -328,7 +328,6 @@ impl<R: BufRead> Tokenizer<R> {
                                                 return;
                                             }
                                         };
-                                        println!("{n} + {count}");
     
                                         Op::FunctionDefine(n + count)
                                     }
