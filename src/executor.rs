@@ -1,4 +1,4 @@
-use super::{Value, Type, Function, FunctionType};
+use super::{Value, Type, Function};
 use super::parser::{ParseTree, ParseError};
 
 use std::collections::HashMap;
@@ -369,6 +369,10 @@ where
             },
             ParseTree::StringCast(x) => Ok(Value::String(format!("{}", self.exec(x, locals)?))),
             ParseTree::Print(x) => match self.exec(x, locals)? {
+                Value::String(s) => {
+                    writeln!(self.stdout, "{s}").map_err(|e| RuntimeError::IO(e))?;
+                    Ok(Value::Nil)
+                }
                 x => {
                     writeln!(self.stdout, "{x}").map_err(|e| RuntimeError::IO(e))?;
                     Ok(Value::Nil)
