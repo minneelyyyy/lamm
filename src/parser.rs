@@ -157,15 +157,21 @@ impl ParseTree {
                                     .ok_or(ParseError::UnexpectedEndInput)?
                                     .map_err(|e| ParseError::TokenizeError(e))?;
 
+                                let body = Box::new(ParseTree::parse(tokens, globals, locals)?);
+
                                 if let Token::Identifier(ident) = token {
+                                    let locals = locals.to_mut();
+
+                                    locals.insert(ident.clone(), Object::Variable(Evaluation::Computed(Value::Nil)));
+
                                     match op {
-                                        Op::Equ => Ok(ParseTree::Equ(ident.clone(),
-                                            Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                            Box::new(ParseTree::parse(tokens, globals, locals)?)
+                                        Op::Equ => Ok(ParseTree::Equ(ident,
+                                            body,
+                                            Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?)
                                         )),
-                                        Op::LazyEqu => Ok(ParseTree::LazyEqu(ident.clone(),
-                                            Box::new(ParseTree::parse(tokens, globals, locals)?),
-                                            Box::new(ParseTree::parse(tokens, globals, locals)?)
+                                        Op::LazyEqu => Ok(ParseTree::LazyEqu(ident,
+                                            body,
+                                            Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?)
                                         )),
                                         _ => panic!("Operator literally changed under your nose"),
                                     }
