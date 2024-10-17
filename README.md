@@ -162,7 +162,7 @@ head [1 2 3 4]  # => 1
 tail [1 2 3 4]  # => [2 3 4]
 init [1 2 3 4]  # => [1 2 3]
 fini [1 2 3 4]  # => 4
-bool [1 2 3]    # => true
+bool [1 2 3 4]  # => true
 bool empty      # => false
 ```
 
