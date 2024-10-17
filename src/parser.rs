@@ -258,7 +258,18 @@ impl ParseTree {
                             Op::LambdaDefine(arg_count) => {
                                 let mut f = ParseTree::parse_lambda(tokens, arg_count)?;
 
-                                f.body = Some(Box::new(ParseTree::parse(tokens, globals, locals)?));
+                                let locals = locals.to_mut();
+
+                                for (name, t) in std::iter::zip(f.arg_names.clone().unwrap(), f.t.1.clone()) {
+                                    match t {
+                                        Type::Function(t) => {
+                                            locals.insert(name.clone(), Function::named(&name, t, None, None));
+                                        }
+                                        _ => (),
+                                    }
+                                }
+
+                                f.body = Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?));
 
                                 Ok(ParseTree::LambdaDefinition(f))
                             }
