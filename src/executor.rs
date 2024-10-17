@@ -1,4 +1,4 @@
-use super::{Value, Type, Function};
+use super::{Value, Type, Object, Evaluation, Function};
 use super::parser::{ParseTree, ParseError};
 
 use std::collections::HashMap;
@@ -43,22 +43,6 @@ impl Display for RuntimeError {
 }
 
 impl Error for RuntimeError {}
-
-#[derive(Clone, Debug)]
-enum Evaluation {
-    // at this point, it's type is set in stone
-    Computed(Value),
-
-    // at this point, it's type is unknown, and may contradict a variable's type
-    // or not match the expected value of the expression, this is a runtime error
-    Uncomputed(Box<ParseTree>),
-}
-
-#[derive(Clone, Debug)]
-enum Object {
-    Variable(Evaluation),
-    Function(Function),
-}
 
 /// Executes an input of ParseTrees
 pub struct Executor<'a, I>
@@ -114,6 +98,13 @@ where
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 + y)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x + y)),
                 (Value::String(x), Value::String(y)) => Ok(Value::String(format!("{x}{y}"))),
+                (Value::Array(xtype, x), Value::Array(ytype, y)) => {
+                    if xtype != ytype {
+                        return Err(RuntimeError::TypeError(xtype, ytype));
+                    }
+
+                    Ok(Value::Array(xtype, [x, y].concat()))
+                },
                 (Value::Array(t, x), y) => {
                     let ytype = y.get_type();
 
@@ -296,25 +287,38 @@ where
 
                 match obj {
                     Some(Object::Function(f)) => {
-                        let locals = locals.to_mut();
-
                         assert!(f.arg_names.is_some());
-                        assert!(f.body.is_some());
 
-                        for ((t, name), tree) in std::iter::zip(std::iter::zip(f.t.1, f.arg_names.unwrap()), args) {
-                            let v = self.exec(Box::new(tree), &mut Cow::Borrowed(locals))?;
+                        let loc = std::iter::zip(std::iter::zip(f.t.1.clone(), f.arg_names.clone().unwrap()), args)
+                            .map(|((t, name), tree)| {
+                                let v = self.exec(Box::new(tree), locals)?;
 
-                            if v.get_type() != t && t != Type::Any {
-                                return Err(RuntimeError::TypeError(t, v.get_type()));
-                            }
+                                if t != v.get_type() {
+                                    return Err(RuntimeError::TypeError(t, v.get_type()));
+                                }
 
-                            locals.insert(name.clone(), match v {
-                                Value::Function(func) => Object::Function(func),
-                                _ => Object::Variable(Evaluation::Computed(v))
-                            });
+                                match v {
+                                    Value::Function(f) => Ok((Object::Function(f), name)),
+                                    v => Ok((Object::Variable(Evaluation::Computed(v)), name)),
+                                }
+                        }).collect::<Result<Vec<(Object, String)>, RuntimeError>>()?;
+
+                        let mut locals = f.locals.clone();
+
+                        for (obj, name) in loc.into_iter() {
+                            locals.insert(name, obj);
                         }
 
-                        self.exec(f.body.unwrap(), &mut Cow::Borrowed(&locals))
+                        // the parser previously placed a copy of this function with the same name and type
+                        // into it's locals, however it doesn't have a body. This would cause a
+                        // panic later when attempting to execute the function during recursive calls.
+                        // we fix this by replacing it with a *complete* copy of the function.
+                        // also only do this if the function has a name in the first place, otherwise it panics with lambdas.
+                        if let Some(name) = f.name.clone() {
+                            locals.insert(name, Object::Function(f.clone()));
+                        }
+
+                        self.exec(f.body.unwrap(), &mut Cow::Borrowed(&Box::new(locals)))
                     }
                     _ => Err(RuntimeError::FunctionUndefined(ident.clone()))
                 }

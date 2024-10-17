@@ -6,6 +6,7 @@ use executor::{Executor, RuntimeError};
 use parser::{ParseTree, Parser};
 use tokenizer::Tokenizer;
 
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::io::{Write, Read, BufRead};
 use std::fmt;
@@ -105,27 +106,46 @@ impl Display for FunctionType {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+enum Evaluation {
+    // at this point, it's type is set in stone
+    Computed(Value),
+
+    // at this point, it's type is unknown, and may contradict a variable's type
+    // or not match the expected value of the expression, this is a runtime error
+    Uncomputed(Box<ParseTree>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Object {
+    Variable(Evaluation),
+    Function(Function),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Function {
     name: Option<String>,
     t: FunctionType,
+    locals: HashMap<String, Object>,
     arg_names: Option<Vec<String>>,
     body: Option<Box<ParseTree>>,
 }
 
 impl Function {
-    fn lambda(t: FunctionType, arg_names: Vec<String>, body: Option<Box<ParseTree>>) -> Self {
+    fn lambda(t: FunctionType, arg_names: Vec<String>, locals: HashMap<String, Object>, body: Option<Box<ParseTree>>) -> Self {
         Self {
             name: None,
             t,
+            locals,
             arg_names: Some(arg_names),
             body
         }
     }
 
-    fn named(name: &str, t: FunctionType, arg_names: Option<Vec<String>>, body: Option<Box<ParseTree>>) -> Self {
+    fn named(name: &str, t: FunctionType, arg_names: Option<Vec<String>>, locals: HashMap<String, Object>, body: Option<Box<ParseTree>>) -> Self {
         Self {
             name: Some(name.to_string()),
             t,
+            locals,
             arg_names,
             body
         }

@@ -1,4 +1,6 @@
-use super::{Value, Type, Function, FunctionType};
+use crate::Evaluation;
+
+use super::{Value, Type, Object, Function, FunctionType};
 use super::tokenizer::{Token, TokenizeError, Op};
 
 use std::error;
@@ -13,8 +15,6 @@ pub enum ParseError {
     UnexpectedEndInput,
     IdentifierUndefined(String),
     InvalidIdentifier(Token),
-    FunctionUndefined(String),
-    VariableUndefined(String),
     UnmatchedArrayClose,
     UnwantedToken(Token),
     TokenizeError(TokenizeError),
@@ -25,10 +25,8 @@ impl Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParseError::UnexpectedEndInput => write!(f, "Input ended unexpectedly"),
-            ParseError::IdentifierUndefined(name) => write!(f, "Undefined variable `{name}`"),
+            ParseError::IdentifierUndefined(name) => write!(f, "Undefined identifier `{name}`"),
             ParseError::InvalidIdentifier(t) => write!(f, "Invalid identifier `{t:?}`"),
-            ParseError::FunctionUndefined(name) => write!(f, "Undefined function `{name}`"),
-            ParseError::VariableUndefined(name) => write!(f, "Undefined variable `{name}`"),
             ParseError::NoInput => write!(f, "No input given"),
             ParseError::UnmatchedArrayClose => write!(f, "there was an unmatched array closing operator `]`"),
             ParseError::TokenizeError(e) => write!(f, "Tokenizer Error: {e}"),
@@ -122,8 +120,8 @@ macro_rules! three_arg {
 impl ParseTree {
     fn parse<I>(
         tokens: &mut Peekable<I>,
-        globals: &HashMap<String, Function>,
-        locals: &mut Cow<HashMap<String, Function>>) -> Result<Self, ParseError>
+        globals: &HashMap<String, Object>,
+        locals: &mut Cow<HashMap<String, Object>>) -> Result<Self, ParseError>
     where
         I: Iterator<Item = Result<Token, TokenizeError>>,
     {
@@ -132,16 +130,18 @@ impl ParseTree {
                 match token {
                     Token::Constant(c) => Ok(Self::Constant(c)),
                     Token::Identifier(ident) => {
-                        // If it is found to be a function, get its argument count.
-                        // During parsing, we only keep track of function definitions
-                        // so that we know how many arguments it takes
-                        if let Some(f) = locals.clone().get(&ident).or(globals.clone().get(&ident)) {
-                            let args = f.t.1.iter()
-                                .map(|_| ParseTree::parse(tokens, globals, locals)).collect::<Result<Vec<_>, ParseError>>()?;
-
-                            Ok(ParseTree::FunctionCall(ident.clone(), args))
+                        if let Some(obj) = locals.clone().get(&ident).or(globals.clone().get(&ident)) {
+                            match obj {
+                                Object::Function(f) => {
+                                    let args = f.t.1.iter()
+                                        .map(|_| ParseTree::parse(tokens, globals, locals)).collect::<Result<Vec<_>, ParseError>>()?;
+        
+                                    Ok(ParseTree::FunctionCall(ident, args))
+                                }
+                                Object::Variable(e) => Ok(ParseTree::Variable(ident)),
+                            }
                         } else {
-                            Ok(ParseTree::Variable(ident.clone()))
+                            Err(ParseError::IdentifierUndefined(ident))
                         }
                     }
                     Token::Operator(op) => {
@@ -174,33 +174,38 @@ impl ParseTree {
                                 }
                             }
                             Op::FunctionDefine(arg_count) => {
-                                let mut f = ParseTree::parse_function(tokens, arg_count)?;
+                                let f = {
+                                    let mut f = ParseTree::parse_function(tokens, arg_count)?;
 
-                                assert!(f.arg_names.is_some());
-                                assert!(f.name.is_some());
-                                assert!(f.body.is_none());
+                                    if locals.contains_key(&f.name.clone().unwrap()) {
+                                        return Err(ParseError::ImmutableError(f.name.unwrap()));
+                                    }
 
-                                if locals.contains_key(&f.name.clone().unwrap()) {
-                                    return Err(ParseError::ImmutableError(f.name.unwrap()));
-                                }
+                                    f.locals = locals.to_mut().clone();
+    
+                                    // recursion requires that f's prototype is present in locals
+                                    f.locals.insert(f.name.clone().unwrap(), Object::Function(f.clone()));
+    
+                                    // we also need any function parameters in local scope
+                                    for (name, t) in std::iter::zip(f.arg_names.clone().unwrap(), f.t.1.clone()) {
+                                        match t {
+                                            Type::Function(t) => {
+                                                f.locals.insert(name.clone(), Object::Function(Function::named(&name, t, None, HashMap::new(), None)));
+                                            }
+                                            _ => {
+                                                // the value isn't important, just that the identifier is there
+                                                f.locals.insert(name.clone(), Object::Variable(Evaluation::Computed(Value::Nil)));
+                                            }
+                                        }
+                                    }
+
+                                    f.body = Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&f.locals))?));
+                                    
+                                    f
+                                };
 
                                 let locals = locals.to_mut();
-
-                                // recursion requires that f's prototype is present in locals
-                                locals.insert(f.name.clone().unwrap(), f.clone());
-
-                                // we also need any function aprameters in local scope
-                                for (name, t) in std::iter::zip(f.arg_names.clone().unwrap(), f.t.1.clone()) {
-                                    match t {
-                                        Type::Function(t) => {
-                                            locals.insert(name.clone(), Function::named(&name, t, None, None));
-                                        }
-                                        _ => (),
-                                    }
-                                }
-
-                                f.body = Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?));
-                                assert!(f.body.is_some());
+                                locals.insert(f.name.clone().unwrap(), Object::Function(f.clone()));
 
                                 Ok(ParseTree::FunctionDefinition(f, Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?)))
                             },
@@ -256,20 +261,29 @@ impl ParseTree {
                             Op::And => two_arg!(And, tokens, globals, locals),
                             Op::Or => two_arg!(Or, tokens, globals, locals),
                             Op::LambdaDefine(arg_count) => {
-                                let mut f = ParseTree::parse_lambda(tokens, arg_count)?;
+                                let f = {
+                                    let mut f = ParseTree::parse_lambda(tokens, arg_count)?;
 
-                                let locals = locals.to_mut();
-
-                                for (name, t) in std::iter::zip(f.arg_names.clone().unwrap(), f.t.1.clone()) {
-                                    match t {
-                                        Type::Function(t) => {
-                                            locals.insert(name.clone(), Function::named(&name, t, None, None));
+                                    let locals = locals.to_mut();
+                                    f.locals = locals.clone();
+    
+                                    // we need any function parameters in local scope
+                                    for (name, t) in std::iter::zip(f.arg_names.clone().unwrap(), f.t.1.clone()) {
+                                        match t {
+                                            Type::Function(t) => {
+                                                f.locals.insert(name.clone(), Object::Function(Function::named(&name, t, None, HashMap::new(), None)));
+                                            }
+                                            _ => {
+                                                // the value isn't important, just that the identifier is there
+                                                f.locals.insert(name.clone(), Object::Variable(Evaluation::Computed(Value::Nil)));
+                                            }
                                         }
-                                        _ => (),
                                     }
-                                }
+    
+                                    f.body = Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&f.locals))?));
 
-                                f.body = Some(Box::new(ParseTree::parse(tokens, globals, &mut Cow::Borrowed(&locals))?));
+                                    f
+                                };
 
                                 Ok(ParseTree::LambdaDefinition(f))
                             }
@@ -297,7 +311,7 @@ impl ParseTree {
         I: Iterator<Item = Result<Token, TokenizeError>>,
     {
         let (t, args) = Self::parse_function_declaration(tokens, arg_count)?;
-        Ok(Function::lambda(t, args, None))
+        Ok(Function::lambda(t, args, HashMap::new(), None))
     }
 
     fn parse_function<I>(tokens: &mut Peekable<I>, arg_count: usize) -> Result<Function, ParseError>
@@ -307,7 +321,7 @@ impl ParseTree {
         let name = Self::get_identifier(tokens.next())?;
         let (t, args) = Self::parse_function_declaration(tokens, arg_count)?;
 
-        Ok(Function::named(&name, t, Some(args), None))
+        Ok(Function::named(&name, t, Some(args), HashMap::new(), None))
     }
 
     fn parse_function_declaration<I>(tokens: &mut Peekable<I>, arg_count: usize) -> Result<(FunctionType, Vec<String>), ParseError>
@@ -434,8 +448,8 @@ pub(crate) struct Parser<I: Iterator<Item = Result<Token, TokenizeError>>> {
     // These are used to keep track of functions in the current context
     // by the parser. otherwise the parser would have no way to tell
     // if the program `* a b 12` is supposed to be ((* a b) (12)) or (* (a b) 12)
-    globals: HashMap<String, Function>,
-    locals: HashMap<String, Function>,
+    globals: HashMap<String, Object>,
+    locals: HashMap<String, Object>,
 }
 
 impl<I: Iterator<Item = Result<Token, TokenizeError>>> Parser<I> {
@@ -447,7 +461,7 @@ impl<I: Iterator<Item = Result<Token, TokenizeError>>> Parser<I> {
         }
     }
 
-    pub fn globals(self, globals: HashMap<String, Function>) -> Self {
+    pub fn globals(self, globals: HashMap<String, Object>) -> Self {
         Self {
             tokens: self.tokens,
             globals,
@@ -455,7 +469,7 @@ impl<I: Iterator<Item = Result<Token, TokenizeError>>> Parser<I> {
         }
     }
 
-    pub fn locals(self, locals: HashMap<String, Function>) -> Self {
+    pub fn locals(self, locals: HashMap<String, Object>) -> Self {
         Self {
             tokens: self.tokens,
             globals: self.globals,
