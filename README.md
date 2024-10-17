@@ -50,8 +50,8 @@ Scope in Lamm consists of a single expression, such as `sqrt + ** a 2 ** b 2`. S
 You can create a multi-statement expression using either `()` syntax or the `~` operator, which `()` is simple syntactic sugar for. In these, only the value of the last expression is returned, the rest get ignored. This is the perfect place to put stateful function calls.
 
 ```
-(
-	print "Hello, world!"
+. x 12 (
+	print + "my favorite number is " x
 	print "Auf Wiedersehen!"
 )
 ```
