@@ -77,10 +77,10 @@ All functions in Lamm are **scoped** similarly to variables. Functions are decla
 
 ```
 : inc x + x 1
-inc 24  # => 25
+	inc 24  # => 25
 
 :. pythag a b sqrt + ** a 2.0 ** b 2.0
-pythag 3 4  # => 5
+	pythag 3 4  # => 5
 
 :::::. ten'args a b c d e f g h i j
 	[a b c d e f g h i j]
