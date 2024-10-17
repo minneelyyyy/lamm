@@ -170,29 +170,27 @@ Using these, you can build a lot of fundamental functional paradigm functions.
 
 ```
 :. map ?: f Any -> Any ?. x [Any] -> [Any]
-  ?? bool x
-    + f head x map 'f tail x
-    empty
+	?? bool x
+		+ f head x map 'f tail x
+		empty
 map ;y ** y 2 [1 2 3 4 5 6 7 8 9 10]  # => [1 4 9 16 25 36 49 64 81 100]
 
 :: iterate : f i count -> [Any]
-  ?? > count 0 
-    + i iterate 'f f i - count 1
-    empty
+	?? > count 0 
+		+ i iterate 'f f i - count 1
+		empty
 iterate ;x + 1 x 0 10  # => [0 1 2 3 4 5 6 7 8 9]
 
 :. take ?. n Int ?. x [Any] -> [Any]
-  ?? > n 0
-    + head x take - n 1 tail x
-    empty
+	?? > n 0
+		+ head x take - n 1 tail x
+		empty
 take 3 [1 2 3 4 5]  # => [1 2 3]
 
 :. take'while : pred Any -> Bool ?. x [Any] -> [Any]
-  ?? bool x
-    ?? pred head x
-      + head x take'while 'pred tail x
-      empty
-    empty
+	?? && bool x pred head x
+		+ head x take'while 'pred tail x
+		empty
 take'while ;y < y 10 [1 3 5 7 9 11 13 15 16]  # => [1 3 5 7 9]
 ```
 
