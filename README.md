@@ -41,6 +41,8 @@ Variables are **scoped** in Lamm, meaning they only exist in the single expressi
 * deg / pi 360.0  # ERROR: `pi` was undefined
 ```
 
+## Scope
+
 Scope in Lamm consists of a single expression, such as `sqrt + ** a 2 ** b 2`. So then, what do I do when I need a variable for more than a single expression? There are multiple solutions depending on your needs.
 
 ### Multi-Statement Expression (half implemented)
@@ -112,7 +114,7 @@ The `:` operator inside of a function prototype tells Lamm that this argument mu
 
 And off course, `:` and `?:` in function prototypes can also be extended depending on the number of arguments the function must take.
 
-### Branching
+## Branching
 
 Lamm has the following boolean expressions
 
@@ -148,7 +150,7 @@ An `?` if statement where it's condition is false simply returns `nil`, as do `p
 )
 ```
 
-### Arrays
+## Arrays
 
 Lamm offers a few fundamental array operations.
 
@@ -194,7 +196,7 @@ take 3 [1 2 3 4 5]  # => [1 2 3]
 take'while ;y < y 10 [1 3 5 7 9 11 13 15 16]  # => [1 3 5 7 9]
 ```
 
-# Lambdas
+## Lambdas
 
 Lambdas are created using the `;` operator, and they are always passed as a value, so no `'` is necessary.
 
