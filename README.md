@@ -51,8 +51,8 @@ You can create a multi-statement expression using either `()` syntax or the `~` 
 
 ```
 . x 12 (
-	print + "my favorite number is " x
-	print "Auf Wiedersehen!"
+	print + "My favorite number is " string x
+	print + "Auf Wiedersehen! Ich werde aber meine Lieblingsnummer " + string x " vermissen."
 )
 ```
 
