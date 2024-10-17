@@ -113,7 +113,7 @@ pub struct Function {
 }
 
 impl Function {
-    pub fn lambda(t: FunctionType, arg_names: Vec<String>, body: Option<Box<ParseTree>>) -> Self {
+    fn lambda(t: FunctionType, arg_names: Vec<String>, body: Option<Box<ParseTree>>) -> Self {
         Self {
             name: None,
             t,
@@ -122,7 +122,7 @@ impl Function {
         }
     }
 
-    pub fn named(name: &str, t: FunctionType, arg_names: Option<Vec<String>>, body: Option<Box<ParseTree>>) -> Self {
+    fn named(name: &str, t: FunctionType, arg_names: Option<Vec<String>>, body: Option<Box<ParseTree>>) -> Self {
         Self {
             name: Some(name.to_string()),
             t,

@@ -78,6 +78,10 @@ pub(crate) enum Op {
     And,
     Or,
     NonCall,
+    Head,
+    Tail,
+    Init,
+    Fini,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +122,10 @@ impl Token {
             "string" => Ok(Token::Operator(Op::StringCast)),
             "print" => Ok(Token::Operator(Op::Print)),
             "empty" => Ok(Token::Operator(Op::Empty)),
+            "head" => Ok(Token::Operator(Op::Head)),
+            "tail" => Ok(Token::Operator(Op::Tail)),
+            "init" => Ok(Token::Operator(Op::Init)),
+            "fini" => Ok(Token::Operator(Op::Fini)),
 
             // Types
             "Any" => Ok(Token::Type(Type::Any)),
@@ -412,7 +420,7 @@ mod tests {
 
     #[test]
     fn uwu() {
-        let program = ":. apply : f x f x apply ; x ** x 2 10";
+        let program = ":. map ?: f Any -> Any ?. x [Any] -> [Any] ?? bool x + f head x map 'f tail x empty map ;x ** x 2 [1 2 3 4 5]";
 
         let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, TokenizeError>>().unwrap();
 

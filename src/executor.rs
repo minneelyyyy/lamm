@@ -18,6 +18,7 @@ pub enum RuntimeError {
     NotAVariable(String),
     ParseFail(String, Type),
     TypeError(Type, Type),
+    EmptyArray,
     IO(io::Error),
 }
 
@@ -26,7 +27,7 @@ impl Display for RuntimeError {
         match self {
             Self::ParseError(e) => write!(f, "Parser Error: {e}"),
             Self::NoOverloadForTypes(op, values)
-                => write!(f, "No overload of `{op}` exists for the operands `[{}]`", 
+                => write!(f, "No overload of `{op}` exists for the operands `{}`", 
                     values.iter().map(|x| format!("{}({x})", x.get_type())).collect::<Vec<_>>().join(", ")),
             Self::ImmutableError(ident) => write!(f, "`{ident}` already exists and cannot be redefined"),
             Self::VariableUndefined(ident) => write!(f, "variable `{ident}` was not defined"),
@@ -36,6 +37,7 @@ impl Display for RuntimeError {
             Self::ParseFail(s, t) => write!(f, "`\"{s}\"` couldn't be parsed into {}", t),
             Self::IO(e) => write!(f, "{e}"),
             Self::TypeError(left, right) => write!(f, "expected type `{left}` but got type `{right}`"),
+            Self::EmptyArray => write!(f, "attempt to access element from an empty array"),
         }
     }
 }
@@ -112,8 +114,28 @@ where
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 + y)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x + y)),
                 (Value::String(x), Value::String(y)) => Ok(Value::String(format!("{x}{y}"))),
-                (Value::Array(_, x), y) => Ok(Value::Array(Type::Any, [x, vec![y]].concat())),
-                (x, Value::Array(_, y)) => Ok(Value::Array(Type::Any, [vec![x], y].concat())),
+                (Value::Array(t, x), y) => {
+                    let ytype = y.get_type();
+
+                    if t != ytype {
+                        return Err(RuntimeError::TypeError(t, ytype));
+                    }
+
+                    // NOTE: use y's type instead of the arrays type.
+                    // an `empty` array has Any type, but any value will have a fixed type.
+                    // this converts the empty array into a typed array.
+                    Ok(Value::Array(ytype, [x, vec![y]].concat()))
+                },
+                (x, Value::Array(t, y)) => {
+                    let xtype = x.get_type();
+
+                    if t != xtype {
+                        return Err(RuntimeError::TypeError(t, xtype));
+                    }
+
+                    // NOTE: read above
+                    Ok(Value::Array(xtype, [vec![x], y].concat()))
+                },
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("+".into(), vec![x, y]))
             },
             ParseTree::Sub(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
@@ -371,6 +393,22 @@ where
                     }
                 }
             }
+            ParseTree::Head(x) => match self.exec(x, locals)? {
+                Value::Array(_, x) => Ok(x.first().ok_or(RuntimeError::EmptyArray)?.clone()),
+                t => Err(RuntimeError::NoOverloadForTypes("head".into(), vec![t]))
+            },
+            ParseTree::Tail(x) => match self.exec(x, locals)? {
+                Value::Array(t, x) => Ok(Value::Array(t, if x.len() > 0 { x[1..].to_vec() } else { vec![] })),
+                t => Err(RuntimeError::NoOverloadForTypes("tail".into(), vec![t]))
+            },
+            ParseTree::Init(x) => match self.exec(x, locals)? {
+                Value::Array(t, x) => Ok(Value::Array(t, if x.len() > 0 { x[..x.len() - 1].to_vec() } else { vec![] })),
+                t => Err(RuntimeError::NoOverloadForTypes("init".into(), vec![t]))
+            },
+            ParseTree::Fini(x) => match self.exec(x, locals)? {
+                Value::Array(_, x) => Ok(x.last().ok_or(RuntimeError::EmptyArray)?.clone()),
+                t => Err(RuntimeError::NoOverloadForTypes("fini".into(), vec![t]))
+            },
         }
     }
 }

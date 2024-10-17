@@ -70,6 +70,10 @@ pub(crate) enum ParseTree {
     // Functional Operations
     Compose(Box<ParseTree>, Box<ParseTree>),
     Id(Box<ParseTree>),
+    Head(Box<ParseTree>),
+    Tail(Box<ParseTree>),
+    Init(Box<ParseTree>),
+    Fini(Box<ParseTree>),
 
     // Branching
     If(Box<ParseTree>, Box<ParseTree>),
@@ -262,6 +266,10 @@ impl ParseTree {
                                 let name = Self::get_identifier(tokens.next())?;
                                 Ok(ParseTree::NonCall(name))
                             },
+                            Op::Head => one_arg!(Head, tokens, globals, locals),
+                            Op::Tail => one_arg!(Tail, tokens, globals, locals),
+                            Op::Init => one_arg!(Init, tokens, globals, locals),
+                            Op::Fini => one_arg!(Fini, tokens, globals, locals),
                             op => Err(ParseError::UnwantedToken(Token::Operator(op))),
                         }
                     }
