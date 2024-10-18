@@ -42,7 +42,7 @@ impl Display for TokenizeError {
 impl error::Error for TokenizeError {}
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Op {
+pub enum Op {
     Add,
     Sub,
     Mul,
@@ -85,7 +85,7 @@ pub(crate) enum Op {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Token {
+pub enum Token {
     Identifier(String),
     Operator(Op),
     Constant(Value),
@@ -407,27 +407,5 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
             },
             Err(e) => Some(Err(TokenizeError::IO(e))),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::str::FromStr;
-
-    use crate::parser::{Parser, ParseTree, ParseError};
-
-    use super::*;
-
-    #[test]
-    fn uwu() {
-        let program = ":. map ?: f Any -> Any ?. x [Any] -> [Any] ?? bool x + f head x map 'f tail x empty map ;x ** x 2 [1 2 3 4 5]";
-
-        let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, TokenizeError>>().unwrap();
-
-        println!("{tokens:?}");
-
-        let trees: Result<Vec<ParseTree>, ParseError> = Parser::new(tokens.into_iter().map(|x| Ok(x))).collect();
-
-        println!("{trees:?}");
     }
 }

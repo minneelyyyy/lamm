@@ -1,15 +1,19 @@
 mod tokenizer;
 mod parser;
 mod executor;
+mod function;
 
 use executor::{Executor, RuntimeError};
 use parser::{ParseTree, Parser};
 use tokenizer::Tokenizer;
+use function::{FunctionType, Function};
 
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::io::{Write, Read, BufRead};
+use std::io::BufRead;
 use std::fmt;
+use std::iter::Peekable;
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub enum Type {
@@ -71,7 +75,7 @@ impl Value {
             Self::String(_) => Type::String,
             Self::Array(t, _) => Type::Array(Box::new(t.clone())),
             Self::Nil => Type::Nil,
-            Self::Function(f) => Type::Function(f.t.clone()),
+            Self::Function(f) => Type::Function(f.get_type()),
         }
     }
 }
@@ -84,98 +88,96 @@ impl Display for Value {
             Self::Bool(x) => write!(f, "{}", if *x { "true" } else { "false" }),
             Self::String(x) => write!(f, "\"{x}\""),
             Self::Array(_t, v) => write!(f, "[{}]", v.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(" ")),
-            Self::Function(func) => {
-                if let Some(name) = &func.name {
-                    write!(f, "Function({}, {}, {})", name, func.t.0, func.t.1.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(", "))
-                } else {
-                    write!(f, "{}", func.t)
-                }
-            }
+            Self::Function(func) => write!(f, "{func}"),
             Self::Nil => write!(f, "nil"),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FunctionType(Box<Type>, Vec<Type>);
-
-impl Display for FunctionType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Function({}, {})", self.0, self.1.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(", "))
-    }
+enum Cache {
+    Cached(Value),
+    Uncached(ParseTree),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum Evaluation {
-    // at this point, it's type is set in stone
-    Computed(Value),
-
-    // at this point, it's type is unknown, and may contradict a variable's type
-    // or not match the expected value of the expression, this is a runtime error
-    Uncomputed(Box<ParseTree>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum Object {
-    Variable(Evaluation),
-    Function(Function),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Function {
-    name: Option<String>,
-    t: FunctionType,
+struct Object {
     locals: HashMap<String, Object>,
-    arg_names: Option<Vec<String>>,
-    body: Option<Box<ParseTree>>,
+    globals: HashMap<String, Object>,
+    value: Cache,
 }
 
-impl Function {
-    fn lambda(t: FunctionType, arg_names: Vec<String>, locals: HashMap<String, Object>, body: Option<Box<ParseTree>>) -> Self {
+impl Object {
+    pub fn variable(tree: ParseTree, globals: HashMap<String, Object>, locals: HashMap<String, Object>) -> Self {
         Self {
-            name: None,
-            t,
             locals,
-            arg_names: Some(arg_names),
-            body
+            globals,
+            value: Cache::Uncached(tree),
         }
     }
 
-    fn named(name: &str, t: FunctionType, arg_names: Option<Vec<String>>, locals: HashMap<String, Object>, body: Option<Box<ParseTree>>) -> Self {
+    pub fn value(v: Value, globals: HashMap<String, Object>, locals: HashMap<String, Object>) -> Self {
         Self {
-            name: Some(name.to_string()),
-            t,
             locals,
-            arg_names,
-            body
+            globals,
+            value: Cache::Cached(v),
         }
+    }
+
+    pub fn function(func: Function, globals: HashMap<String, Object>, locals: HashMap<String, Object>) -> Self {
+        Self {
+            locals,
+            globals,
+            value: Cache::Cached(Value::Function(func)),
+        }
+    }
+
+    /// evaluate the tree inside of an object if it isn't evaluated yet, returns the value
+    pub fn eval(&mut self) -> Result<Value, RuntimeError> {
+        match self.value.clone() {
+            Cache::Cached(v) => Ok(v),
+            Cache::Uncached(tree) => {
+                let mut tree = vec![Ok(tree)].into_iter();
+
+                let mut exec = Executor::new(&mut tree)
+                    .locals(self.locals.clone())
+                    .globals(self.globals.clone());
+
+                let v = exec.next().unwrap()?;
+
+                self.value = Cache::Cached(v.clone());
+
+                Ok(v)
+            }
+        }
+    }
+
+    pub fn locals(&self) -> HashMap<String, Object> {
+        self.locals.clone()
+    }
+
+    pub fn globals(&self) -> HashMap<String, Object> {
+        self.globals.clone()
     }
 }
 
 pub struct Runtime<'a, R: BufRead> {
-    inner: executor::Executor<'a, parser::Parser<tokenizer::Tokenizer<R>>>
+    tokenizer: Peekable<Tokenizer<R>>,
+    parser: Option<Parser<'a, Tokenizer<R>>>,
+    phantom: PhantomData<Executor<'a, Parser<'a, Tokenizer<R>>>>,
 }
 
-impl<'a, R: BufRead + 'a> Runtime<'a, R> {
+impl<'a, R: BufRead> Runtime<'a, R> {
     pub fn new(reader: R) -> Self {
         Self {
-            inner: Executor::new(Parser::new(Tokenizer::new(reader)))
+            tokenizer: Tokenizer::new(reader).peekable(),
+            parser: None,
+            phantom: PhantomData,
         }
     }
 
-    pub fn stdout(self, stdout: impl Write + 'a) -> Self {
-        Self {
-            inner: self.inner.stdout(stdout)
-        }
-    }
-
-    pub fn stdin(self, stdin: impl Read + 'a) -> Self {
-        Self {
-            inner: self.inner.stdin(stdin)
-        }
-    }
-
-    pub fn values(self) -> impl Iterator<Item = Result<Value, RuntimeError>> + 'a {
-        self.inner
+    pub fn values(&'a mut self) -> impl Iterator<Item = Result<Value, RuntimeError>> + 'a {
+        self.parser = Some(Parser::new(&mut self.tokenizer));
+        Executor::new(self.parser.as_mut().unwrap())
     }
 }

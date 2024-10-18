@@ -1,11 +1,10 @@
-use super::{Value, Type, Object, Evaluation, Function};
+use super::{Value, Type, Object};
 use super::parser::{ParseTree, ParseError};
 
 use std::collections::HashMap;
-use std::borrow::Cow;
 use std::fmt::Display;
 use std::error::Error;
-use std::io::{self, Read, Write};
+use std::io;
 
 #[derive(Debug)]
 pub enum RuntimeError {
@@ -47,52 +46,62 @@ impl Error for RuntimeError {}
 /// Executes an input of ParseTrees
 pub struct Executor<'a, I>
 where
-    I: Iterator<Item = Result<ParseTree, ParseError>>,
+    I: Iterator<Item = Result<ParseTree, ParseError>>
 {
-    exprs: I,
+    exprs: &'a mut I,
     globals: HashMap<String, Object>,
-    stdout: Box<dyn Write + 'a>,
-    stdin: Box<dyn Read + 'a>,
+    locals: HashMap<String, Object>,
 }
 
 impl<'a, I> Executor<'a, I>
 where
     I: Iterator<Item = Result<ParseTree, ParseError>>,
 {
-    pub fn new(exprs: I) -> Self {
+    pub fn new(exprs: &'a mut I) -> Self {
         Self {
             exprs,
             globals: HashMap::new(),
-            stdout: Box::new(io::stdout()),
-            stdin: Box::new(io::stdin()),
+            locals: HashMap::new(),
         }
     }
 
-    pub fn stdout(self, writer: impl Write + 'a) -> Self {
-        Self {
-            exprs: self.exprs,
-            globals: self.globals,
-            stdout: Box::new(writer),
-            stdin: self.stdin,
-        }
+    pub fn globals(mut self, globals: HashMap<String, Object>) -> Self {
+        self.globals = globals;
+        self
     }
 
-    pub fn stdin(self, reader: impl Read + 'a) -> Self {
-        Self {
-            exprs: self.exprs,
-            globals: self.globals,
-            stdout: self.stdout,
-            stdin: Box::new(reader),
-        }
+    pub fn _add_global(mut self, k: String, v: Object) -> Self {
+        self.globals.insert(k, v);
+        self
     }
 
-    fn exec(
-        &mut self,
-        tree: Box<ParseTree>,
-        locals: &mut Cow<Box<HashMap<String, Object>>>) -> Result<Value, RuntimeError>
-    {
+    pub fn locals(mut self, locals: HashMap<String, Object>) -> Self {
+        self.locals = locals;
+        self
+    }
+
+    pub fn add_local(mut self, k: String, v: Object) -> Self {
+        self.locals.insert(k, v);
+        self
+    }
+
+    fn _get_object(&self, ident: &String) -> Result<&Object, RuntimeError> {
+        self.locals.get(ident).or(self.globals.get(ident))
+            .ok_or(RuntimeError::VariableUndefined(ident.clone()))
+    }
+
+    fn get_object_mut(&mut self, ident: &String) -> Result<&mut Object, RuntimeError> {
+        self.locals.get_mut(ident).or(self.globals.get_mut(ident))
+            .ok_or(RuntimeError::VariableUndefined(ident.clone()))
+    }
+
+    fn variable_exists(&self, ident: &String) -> bool {
+        self.locals.contains_key(ident) || self.globals.contains_key(ident)
+    }
+
+    pub fn exec(&mut self, tree: Box<ParseTree>) -> Result<Value, RuntimeError> {
         match *tree {
-            ParseTree::Add(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::Add(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x + y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x + y as f64)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 + y)),
@@ -129,14 +138,14 @@ where
                 },
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("+".into(), vec![x, y]))
             },
-            ParseTree::Sub(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::Sub(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x - y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x - y as f64)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 - y)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x - y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("-".into(), vec![x, y]))
             },
-            ParseTree::Mul(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::Mul(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x * y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x * y as f64)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 * y)),
@@ -144,28 +153,28 @@ where
                 (Value::String(x), Value::Int(y)) => Ok(Value::String(x.repeat(y as usize))),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("*".into(), vec![x, y]))
             },
-            ParseTree::Div(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::Div(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x / y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x / y as f64)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 / y)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x / y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("*".into(), vec![x, y]))
             },
-            ParseTree::Exp(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::Exp(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x.pow(y as u32))),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float((x as f64).powf(y))),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x.powf(y as f64))),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x.powf(y))),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("**".into(), vec![x, y])),
             },
-            ParseTree::Mod(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::Mod(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x % y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x % y as f64)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Float(x as f64 % y)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x % y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("%".into(), vec![x, y])),
             },
-            ParseTree::EqualTo(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::EqualTo(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x == y)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(x as f64 == y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x == y as f64)),
@@ -174,7 +183,7 @@ where
                 (Value::String(x), Value::String(y)) => Ok(Value::Bool(x == y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("==".into(), vec![x, y])),
             },
-            ParseTree::NotEqualTo(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::NotEqualTo(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x != y)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(x as f64 != y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x != y as f64)),
@@ -183,80 +192,83 @@ where
                 (Value::String(x), Value::String(y)) => Ok(Value::Bool(x != y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("!=".into(), vec![x, y])),
             },
-            ParseTree::GreaterThan(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::GreaterThan(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x > y)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(x as f64 > y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x > y as f64)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x > y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes(">".into(), vec![x, y])),
             },
-            ParseTree::GreaterThanOrEqualTo(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::GreaterThanOrEqualTo(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x >= y)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(x as f64 >= y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x >= y as f64)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x >= y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes(">=".into(), vec![x, y])),
             },
-            ParseTree::LessThan(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::LessThan(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x < y)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Bool((x as f64) < y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x < y as f64)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x < y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("<".into(), vec![x, y])),
             },
-            ParseTree::LessThanOrEqualTo(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::LessThanOrEqualTo(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x <= y)),
                 (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(x as f64 <= y)),
                 (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(x <= y as f64)),
                 (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x <= y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("<=".into(), vec![x, y])),
             },
-            ParseTree::Not(x) => match self.exec(x, locals)? {
+            ParseTree::Not(x) => match self.exec(x)? {
                 Value::Bool(x) => Ok(Value::Bool(!x)),
                 x => Err(RuntimeError::NoOverloadForTypes("not".into(), vec![x]))
             },
-            ParseTree::And(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::And(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(x && y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("&&".into(), vec![x, y]))
             },
-            ParseTree::Or(x, y) => match (self.exec(x, locals)?, self.exec(y, locals)?) {
+            ParseTree::Or(x, y) => match (self.exec(x)?, self.exec(y)?) {
                 (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(x || y)),
                 (x, y) => Err(RuntimeError::NoOverloadForTypes("||".into(), vec![x, y]))
             },
             ParseTree::Equ(ident, body, scope) => {
-                if self.globals.contains_key(&ident) || locals.contains_key(&ident) {
+                if self.variable_exists(&ident) {
                     Err(RuntimeError::ImmutableError(ident.clone()))
                 } else {
-                    let locals = locals.to_mut();
-                    let value = self.exec(body, &mut Cow::Borrowed(&locals))?;
-                    locals.insert(ident.clone(), Object::Variable(Evaluation::Computed(value)));
+                    let value = self.exec(body)?;
 
-                    self.exec(scope, &mut Cow::Borrowed(&locals))
+                    Executor::new(self.exprs)
+                        .globals(self.globals.clone())
+                        .locals(self.locals.clone())
+                        .add_local(ident, Object::value(value, self.globals.to_owned(), self.locals.to_owned()))
+                        .exec(scope)
                 }
             },
             ParseTree::LazyEqu(ident, body, scope) => {
-                if self.globals.contains_key(&ident) || locals.contains_key(&ident) {
+                if self.variable_exists(&ident) {
                     Err(RuntimeError::ImmutableError(ident.clone()))
                 } else {
-                    let locals = locals.to_mut();
-                    locals.insert(ident.clone(), Object::Variable(Evaluation::Uncomputed(body)));
-
-                    self.exec(scope, &mut Cow::Borrowed(&locals))
+                    Executor::new(self.exprs)
+                        .globals(self.globals.clone())
+                        .locals(self.locals.clone())
+                        .add_local(ident, Object::variable(*body, self.globals.to_owned(), self.locals.to_owned()))
+                        .exec(scope)
                 }
             },
             ParseTree::FunctionDefinition(func, scope) => {
-                let locals = locals.to_mut();
-
-                locals.insert(func.name.clone().unwrap(), Object::Function(func));
-
-                self.exec(scope, &mut Cow::Borrowed(&locals))
+                Executor::new(self.exprs)
+                    .globals(self.globals.clone())
+                    .locals(self.locals.clone())
+                    .add_local(func.name().unwrap().to_string(), Object::function(func, self.globals.clone(), self.locals.clone()))
+                    .exec(scope)
             },
             ParseTree::Compose(x, y) => {
-                self.exec(x, locals)?;
-                self.exec(y, locals)
+                self.exec(x)?;
+                self.exec(y)
             },
-            ParseTree::Id(x) => self.exec(x, locals),
-            ParseTree::If(cond, body) => if match self.exec(cond, locals)? {
+            ParseTree::Id(x) => self.exec(x),
+            ParseTree::If(cond, body) => if match self.exec(cond)? {
                     Value::Float(f) => f != 0.0,
                     Value::Int(i) => i != 0,
                     Value::Bool(b) => b,
@@ -265,85 +277,42 @@ where
                     Value::Nil => false,
                     x => return Err(RuntimeError::NoOverloadForTypes("?".into(), vec![x])),
                 } {
-                    self.exec(body, locals)
+                    self.exec(body)
                 } else {
                     Ok(Value::Nil)
                 },
-            ParseTree::IfElse(cond, istrue, isfalse) => if match self.exec(cond, locals)? {
+            ParseTree::IfElse(cond, istrue, isfalse) => if match self.exec(cond)? {
                 Value::Float(f) => f != 0.0,
                 Value::Int(i) => i != 0,
                 Value::Bool(b) => b,
                 Value::String(s) => !s.is_empty(),
                 Value::Array(_, vec) => !vec.is_empty(),
                 Value::Nil => false,
-                x => return Err(RuntimeError::NoOverloadForTypes("?".into(), vec![x])),
+                x => return Err(RuntimeError::NoOverloadForTypes("??".into(), vec![x])),
             } {
-                self.exec(istrue, locals)
+                self.exec(istrue)
             } else {
-                self.exec(isfalse, locals)
+                self.exec(isfalse)
             },
             ParseTree::FunctionCall(ident, args) => {
-                let obj = locals.get(&ident).or(self.globals.get(&ident)).cloned();
+                let args = args.into_iter().map(|x| Object::variable(x, self.globals.clone(), self.locals.clone())).collect();
+                let obj = self.get_object_mut(&ident)?;
+                let v = obj.eval()?;
 
-                match obj {
-                    Some(Object::Function(f)) => {
-                        assert!(f.arg_names.is_some());
-
-                        let loc = std::iter::zip(std::iter::zip(f.t.1.clone(), f.arg_names.clone().unwrap()), args)
-                            .map(|((t, name), tree)| {
-                                let v = self.exec(Box::new(tree), locals)?;
-
-                                if t != v.get_type() {
-                                    return Err(RuntimeError::TypeError(t, v.get_type()));
-                                }
-
-                                match v {
-                                    Value::Function(f) => Ok((Object::Function(f), name)),
-                                    v => Ok((Object::Variable(Evaluation::Computed(v)), name)),
-                                }
-                        }).collect::<Result<Vec<(Object, String)>, RuntimeError>>()?;
-
-                        let mut locals = f.locals.clone();
-
-                        for (obj, name) in loc.into_iter() {
-                            locals.insert(name, obj);
-                        }
-
-                        // the parser previously placed a copy of this function with the same name and type
-                        // into it's locals, however it doesn't have a body. This would cause a
-                        // panic later when attempting to execute the function during recursive calls.
-                        // we fix this by replacing it with a *complete* copy of the function.
-                        // also only do this if the function has a name in the first place, otherwise it panics with lambdas.
-                        if let Some(name) = f.name.clone() {
-                            locals.insert(name, Object::Function(f.clone()));
-                        }
-
-                        self.exec(f.body.unwrap(), &mut Cow::Borrowed(&Box::new(locals)))
-                    }
+                match v {
+                    Value::Function(mut f) => f.call(obj.globals(), obj.locals(), args),
                     _ => Err(RuntimeError::FunctionUndefined(ident.clone()))
                 }
             },
             ParseTree::Variable(ident) => {
-                let locals = locals.to_mut();
+                let obj = self.get_object_mut(&ident)?;
 
-                let obj = locals.get(&ident).or(self.globals.get(&ident)).cloned();
+                let v = obj.eval()?;
 
-                if let Some(Object::Variable(eval)) = obj {
-                    match eval {
-                        Evaluation::Computed(v) => Ok(v),
-                        Evaluation::Uncomputed(tree) => {
-                            let v = self.exec(tree, &mut Cow::Borrowed(&locals))?;
-                            locals.insert(ident, Object::Variable(Evaluation::Computed(v.clone())));
-
-                            Ok(v)
-                        }
-                    }
-                } else {
-                    Err(RuntimeError::VariableUndefined(ident.clone()))
-                }
+                Ok(v)
             },
             ParseTree::Constant(value) => Ok(value),
-            ParseTree::IntCast(x) => match self.exec(x, locals)? {
+            ParseTree::IntCast(x) => match self.exec(x)? {
                 Value::Int(x) => Ok(Value::Int(x)),
                 Value::Float(x) => Ok(Value::Int(x as i64)),
                 Value::Bool(x) => Ok(Value::Int(if x { 1 } else { 0 })),
@@ -353,7 +322,7 @@ where
                 }
                 x => Err(RuntimeError::NoOverloadForTypes("int".into(), vec![x])),
             },
-            ParseTree::FloatCast(x) => match self.exec(x, locals)? {
+            ParseTree::FloatCast(x) => match self.exec(x)? {
                 Value::Int(x) => Ok(Value::Float(x as f64)),
                 Value::Float(x) => Ok(Value::Float(x)),
                 Value::Bool(x) => Ok(Value::Float(if x { 1.0 } else { 0.0 })),
@@ -363,7 +332,7 @@ where
                 }
                 x => Err(RuntimeError::NoOverloadForTypes("float".into(), vec![x])),
             },
-            ParseTree::BoolCast(x) => match self.exec(x, locals)? {
+            ParseTree::BoolCast(x) => match self.exec(x)? {
                 Value::Int(x) => Ok(Value::Bool(x != 0)),
                 Value::Float(x) => Ok(Value::Bool(x != 0.0)),
                 Value::Bool(x) => Ok(Value::Bool(x)),
@@ -371,49 +340,38 @@ where
                 Value::Array(_, vec) => Ok(Value::Bool(!vec.is_empty())),
                 x => Err(RuntimeError::NoOverloadForTypes("bool".into(), vec![x])),
             },
-            ParseTree::StringCast(x) => Ok(Value::String(format!("{}", self.exec(x, locals)?))),
-            ParseTree::Print(x) => match self.exec(x, locals)? {
+            ParseTree::StringCast(x) => Ok(Value::String(format!("{}", self.exec(x)?))),
+            ParseTree::Print(x) => match self.exec(x)? {
                 Value::String(s) => {
-                    writeln!(self.stdout, "{s}").map_err(|e| RuntimeError::IO(e))?;
+                    println!("{s}");
                     Ok(Value::Nil)
                 }
                 x => {
-                    writeln!(self.stdout, "{x}").map_err(|e| RuntimeError::IO(e))?;
+                    println!("{x}");
                     Ok(Value::Nil)
                 }
             }
             ParseTree::LambdaDefinition(func) => Ok(Value::Function(func)),
             ParseTree::NonCall(name) => {
-                let locals = locals.to_mut();
+                let obj = self.get_object_mut(&name)?;
 
-                let func = locals.get(&name).ok_or(RuntimeError::FunctionUndefined(name.clone())).cloned()?;
+                let v = obj.eval()?;
 
-                match func {
-                    Object::Function(func) => Ok(Value::Function(func.clone())),
-                    Object::Variable(var) => match var {
-                        Evaluation::Computed(value) => Ok(value.clone()),
-                        Evaluation::Uncomputed(tree) => {
-                            let v = self.exec(tree, &mut Cow::Borrowed(&locals))?;
-                            locals.insert(name, Object::Variable(Evaluation::Computed(v.clone())));
-
-                            Ok(v)
-                        }
-                    }
-                }
+                Ok(v)
             }
-            ParseTree::Head(x) => match self.exec(x, locals)? {
+            ParseTree::Head(x) => match self.exec(x)? {
                 Value::Array(_, x) => Ok(x.first().ok_or(RuntimeError::EmptyArray)?.clone()),
                 t => Err(RuntimeError::NoOverloadForTypes("head".into(), vec![t]))
             },
-            ParseTree::Tail(x) => match self.exec(x, locals)? {
+            ParseTree::Tail(x) => match self.exec(x)? {
                 Value::Array(t, x) => Ok(Value::Array(t, if x.len() > 0 { x[1..].to_vec() } else { vec![] })),
                 t => Err(RuntimeError::NoOverloadForTypes("tail".into(), vec![t]))
             },
-            ParseTree::Init(x) => match self.exec(x, locals)? {
+            ParseTree::Init(x) => match self.exec(x)? {
                 Value::Array(t, x) => Ok(Value::Array(t, if x.len() > 0 { x[..x.len() - 1].to_vec() } else { vec![] })),
                 t => Err(RuntimeError::NoOverloadForTypes("init".into(), vec![t]))
             },
-            ParseTree::Fini(x) => match self.exec(x, locals)? {
+            ParseTree::Fini(x) => match self.exec(x)? {
                 Value::Array(_, x) => Ok(x.last().ok_or(RuntimeError::EmptyArray)?.clone()),
                 t => Err(RuntimeError::NoOverloadForTypes("fini".into(), vec![t]))
             },
@@ -428,7 +386,7 @@ impl<'a, I: Iterator<Item = Result<ParseTree, ParseError>>> Iterator for Executo
         let expr = self.exprs.next();
 
         match expr {
-            Some(Ok(expr)) => Some(self.exec(Box::new(expr), &mut Cow::Borrowed(&Box::new(HashMap::new())))),
+            Some(Ok(expr)) => Some(self.exec(Box::new(expr))),
             Some(Err(e)) => Some(Err(RuntimeError::ParseError(e))),
             None => None,
         }
