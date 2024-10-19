@@ -74,6 +74,8 @@ pub enum Op {
     Print,
     OpenArray,
     CloseArray,
+    OpenStatement,
+    CloseStatement,
     Empty,
     And,
     Or,
@@ -84,7 +86,7 @@ pub enum Op {
     Fini,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Identifier(String),
     Operator(Op),
@@ -196,6 +198,8 @@ impl<R: BufRead> Tokenizer<R> {
             ("!=", Op::NotEqualTo),
             ("[", Op::OpenArray),
             ("]", Op::CloseArray),
+            ("(", Op::OpenStatement),
+            (")", Op::CloseStatement),
             ("!", Op::Not),
             ("&&", Op::And),
             ("||", Op::Or),

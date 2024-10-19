@@ -89,6 +89,7 @@ pub(crate) enum ParseTree {
 
     // Misc
     Print(Box<ParseTree>),
+    Nop,
 }
 
 /// Parses input tokens and produces ParseTrees for an Executor
@@ -133,148 +134,178 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
     }
 
     fn parse(&mut self) -> Result<ParseTree, ParseError> {
-        match self.tokens.next() {
-            Some(Ok(token)) => {
-                match token {
-                    Token::Constant(c) => Ok(ParseTree::Constant(c)),
-                    Token::Identifier(ident) => {
-                        match self.get_object_type(&ident)? {
-                            Type::Function(f) => {
-                                let args = f.1.clone().iter()
-                                    .map(|_| self.parse()).collect::<Result<Vec<_>, ParseError>>()?;
-    
-                                Ok(ParseTree::FunctionCall(ident, args))
-                            }
-                            _ => Ok(ParseTree::Variable(ident)),
-                        }
+        match self.tokens.next().ok_or(ParseError::NoInput)?.map_err(|e| ParseError::TokenizeError(e))? {
+            Token::Constant(c) => Ok(ParseTree::Constant(c)),
+            Token::Identifier(ident) => {
+                match self.get_object_type(&ident)? {
+                    Type::Function(f) => {
+                        let args = f.1.clone().iter()
+                            .map(|_| self.parse()).collect::<Result<Vec<_>, ParseError>>()?;
+
+                        Ok(ParseTree::FunctionCall(ident, args))
                     }
-                    Token::Operator(op) => {
-                        match op {
-                            Op::Add => Ok(ParseTree::Add(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Sub => Ok(ParseTree::Sub(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Mul => Ok(ParseTree::Mul(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Div => Ok(ParseTree::Div(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Exp => Ok(ParseTree::Exp(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Mod => Ok(ParseTree::Mod(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Equ | Op::LazyEqu => {
-                                let token = self.tokens.next()
-                                    .ok_or(ParseError::UnexpectedEndInput)?
-                                    .map_err(|e| ParseError::TokenizeError(e))?;
-
-                                let body = Box::new(self.parse()?);
-
-                                if let Token::Identifier(ident) = token {
-                                    match op {
-                                        Op::Equ => Ok(ParseTree::Equ(ident.clone(),
-                                            body.clone(),
-                                            Box::new(Parser::new(self.tokens.by_ref())
-                                                .locals(self.locals.clone())
-                                                .globals(self.globals.clone())
-                                                .add_local(ident, Type::Any)
-                                                .parse()?))
-                                        ),
-                                        Op::LazyEqu => Ok(ParseTree::LazyEqu(ident.clone(),
-                                            body.clone(),
-                                            Box::new(Parser::new(self.tokens.by_ref())
-                                                .locals(self.locals.clone())
-                                                .globals(self.globals.clone())
-                                                .add_local(ident, Type::Any)
-                                                .parse()?))
-                                        ),
-                                        _ => unreachable!(),
-                                    }
-                                } else {
-                                    Err(ParseError::InvalidIdentifier(token))
-                                }
-                            }
-                            Op::FunctionDefine(arg_count) => {
-                                let f = self.parse_function(arg_count)?;
-
-                                Ok(ParseTree::FunctionDefinition(f.clone(),
-                                    Box::new(
-                                        Parser::new(self.tokens)
-                                        .globals(self.globals.clone())
-                                        .locals(self.locals.clone())
-                                        .add_local(f.name().unwrap().to_string(), Type::Function(f.get_type()))
-                                        .parse()?
-                                    )))
-                            },
-                            Op::Compose => Ok(ParseTree::Compose(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Id => Ok(ParseTree::Id(Box::new(self.parse()?))),
-                            Op::IfElse => Ok(ParseTree::IfElse(Box::new(self.parse()?), Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::If => Ok(ParseTree::If(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::EqualTo => Ok(ParseTree::EqualTo(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::GreaterThan => Ok(ParseTree::GreaterThan(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::LessThan => Ok(ParseTree::LessThan(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::GreaterThanOrEqualTo => Ok(ParseTree::GreaterThanOrEqualTo(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::LessThanOrEqualTo => Ok(ParseTree::LessThanOrEqualTo(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Not => Ok(ParseTree::Not(Box::new(self.parse()?))),
-                            Op::IntCast => Ok(ParseTree::IntCast(Box::new(self.parse()?))),
-                            Op::FloatCast => Ok(ParseTree::FloatCast(Box::new(self.parse()?))),
-                            Op::BoolCast => Ok(ParseTree::BoolCast(Box::new(self.parse()?))),
-                            Op::StringCast => Ok(ParseTree::StringCast(Box::new(self.parse()?))),
-                            Op::Print => Ok(ParseTree::Print(Box::new(self.parse()?))),
-                            Op::OpenArray => {
-                                let mut depth = 1;
-
-                                // take tokens until we reach the end of this array
-                                // if we don't collect them here it causes rust to overflow computing the types
-                                let array_tokens = self.tokens.by_ref().take_while(|t| match t {
-                                    Ok(Token::Operator(Op::OpenArray)) => {
-                                        depth += 1;
-                                        true
-                                    },
-                                    Ok(Token::Operator(Op::CloseArray)) => {
-                                        depth -= 1;
-                                        depth > 0
-                                    }
-                                    _ => true,
-                                }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
-
-                                let mut array_tokens = array_tokens
-                                    .into_iter()
-                                    .map(|t| Ok(t))
-                                    .collect::<Vec<Result<Token, TokenizeError>>>()
-                                    .into_iter()
-                                    .peekable();
-
-                                let trees: Vec<ParseTree> = Parser::new(&mut array_tokens)
-                                    .globals(self.globals.to_owned())
-                                    .locals(self.locals.to_owned())
-                                    .collect::<Result<_, ParseError>>()?;
-
-                                let tree = trees.into_iter().fold(
-                                    ParseTree::Constant(Value::Array(Type::Any, vec![])),
-                                    |acc, x| ParseTree::Add(Box::new(acc), Box::new(x.clone())),
-                                );
-
-                                Ok(tree)
-                            }
-                            Op::Empty => Ok(ParseTree::Constant(Value::Array(Type::Any, vec![]))),
-                            Op::CloseArray => Err(ParseError::UnmatchedArrayClose),
-                            Op::NotEqualTo => Ok(ParseTree::NotEqualTo(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::And => Ok(ParseTree::And(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::Or => Ok(ParseTree::Or(Box::new(self.parse()?), Box::new(self.parse()?))),
-                            Op::LambdaDefine(arg_count) => {
-                                let f = self.parse_lambda(arg_count)?;
-                                Ok(ParseTree::LambdaDefinition(f))
-                            }
-                            Op::NonCall => {
-                                let name = Self::get_identifier(self.tokens.next())?;
-                                Ok(ParseTree::NonCall(name))
-                            },
-                            Op::Head => Ok(ParseTree::Head(Box::new(self.parse()?))),
-                            Op::Tail => Ok(ParseTree::Tail(Box::new(self.parse()?))),
-                            Op::Init => Ok(ParseTree::Init(Box::new(self.parse()?))),
-                            Op::Fini => Ok(ParseTree::Fini(Box::new(self.parse()?))),
-                            op => Err(ParseError::UnwantedToken(Token::Operator(op))),
-                        }
-                    }
-                    t => Err(ParseError::UnwantedToken(t)),
+                    _ => Ok(ParseTree::Variable(ident)),
                 }
-            },
-            Some(Err(e)) => Err(ParseError::TokenizeError(e)),
-            None => Err(ParseError::NoInput),
+            }
+            Token::Operator(op) => {
+                match op {
+                    Op::Add => Ok(ParseTree::Add(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Sub => Ok(ParseTree::Sub(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Mul => Ok(ParseTree::Mul(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Div => Ok(ParseTree::Div(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Exp => Ok(ParseTree::Exp(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Mod => Ok(ParseTree::Mod(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Equ | Op::LazyEqu => {
+                        let token = self.tokens.next()
+                            .ok_or(ParseError::UnexpectedEndInput)?
+                            .map_err(|e| ParseError::TokenizeError(e))?;
+
+                        let body = Box::new(self.parse()?);
+
+                        if let Token::Identifier(ident) = token {
+                            match op {
+                                Op::Equ => Ok(ParseTree::Equ(ident.clone(),
+                                    body.clone(),
+                                    Box::new(Parser::new(self.tokens.by_ref())
+                                        .locals(self.locals.clone())
+                                        .globals(self.globals.clone())
+                                        .add_local(ident, Type::Any)
+                                        .parse()?))
+                                ),
+                                Op::LazyEqu => Ok(ParseTree::LazyEqu(ident.clone(),
+                                    body.clone(),
+                                    Box::new(Parser::new(self.tokens.by_ref())
+                                        .locals(self.locals.clone())
+                                        .globals(self.globals.clone())
+                                        .add_local(ident, Type::Any)
+                                        .parse()?))
+                                ),
+                                _ => unreachable!(),
+                            }
+                        } else {
+                            Err(ParseError::InvalidIdentifier(token))
+                        }
+                    }
+                    Op::FunctionDefine(arg_count) => {
+                        let f = self.parse_function(arg_count)?;
+
+                        Ok(ParseTree::FunctionDefinition(f.clone(),
+                            Box::new(
+                                Parser::new(self.tokens)
+                                .globals(self.globals.clone())
+                                .locals(self.locals.clone())
+                                .add_local(f.name().unwrap().to_string(), Type::Function(f.get_type()))
+                                .parse()?
+                            )))
+                    },
+                    Op::Compose => Ok(ParseTree::Compose(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Id => Ok(ParseTree::Id(Box::new(self.parse()?))),
+                    Op::IfElse => Ok(ParseTree::IfElse(Box::new(self.parse()?), Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::If => Ok(ParseTree::If(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::EqualTo => Ok(ParseTree::EqualTo(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::GreaterThan => Ok(ParseTree::GreaterThan(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::LessThan => Ok(ParseTree::LessThan(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::GreaterThanOrEqualTo => Ok(ParseTree::GreaterThanOrEqualTo(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::LessThanOrEqualTo => Ok(ParseTree::LessThanOrEqualTo(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Not => Ok(ParseTree::Not(Box::new(self.parse()?))),
+                    Op::IntCast => Ok(ParseTree::IntCast(Box::new(self.parse()?))),
+                    Op::FloatCast => Ok(ParseTree::FloatCast(Box::new(self.parse()?))),
+                    Op::BoolCast => Ok(ParseTree::BoolCast(Box::new(self.parse()?))),
+                    Op::StringCast => Ok(ParseTree::StringCast(Box::new(self.parse()?))),
+                    Op::Print => Ok(ParseTree::Print(Box::new(self.parse()?))),
+                    Op::OpenArray => {
+                        let mut depth = 1;
+
+                        // take tokens until we reach the end of this array
+                        // if we don't collect them here it causes rust to overflow computing the types
+                        let array_tokens = self.tokens.by_ref().take_while(|t| match t {
+                            Ok(Token::Operator(Op::OpenArray)) => {
+                                depth += 1;
+                                true
+                            },
+                            Ok(Token::Operator(Op::CloseArray)) => {
+                                depth -= 1;
+                                depth > 0
+                            }
+                            _ => true,
+                        }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
+
+                        let mut array_tokens = array_tokens
+                            .into_iter()
+                            .map(|t| Ok(t))
+                            .collect::<Vec<Result<Token, TokenizeError>>>()
+                            .into_iter()
+                            .peekable();
+
+                        let trees: Vec<ParseTree> = Parser::new(&mut array_tokens)
+                            .globals(self.globals.to_owned())
+                            .locals(self.locals.to_owned())
+                            .collect::<Result<_, ParseError>>()?;
+
+                        let tree = trees.into_iter().fold(
+                            ParseTree::Constant(Value::Array(Type::Any, vec![])),
+                            |acc, x| ParseTree::Add(Box::new(acc), Box::new(x.clone())),
+                        );
+
+                        Ok(tree)
+                    }
+                    Op::OpenStatement => {
+                        let mut depth = 1;
+
+                        // take tokens until we reach the end of this array
+                        // if we don't collect them here it causes rust to overflow computing the types
+                        let tokens = self.tokens.by_ref().take_while(|t| match t {
+                            Ok(Token::Operator(Op::OpenStatement)) => {
+                                depth += 1;
+                                true
+                            },
+                            Ok(Token::Operator(Op::CloseStatement)) => {
+                                depth -= 1;
+                                depth > 0
+                            }
+                            _ => true,
+                        }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
+
+                        let mut tokens = tokens
+                            .into_iter()
+                            .map(|t| Ok(t))
+                            .collect::<Vec<Result<Token, TokenizeError>>>()
+                            .into_iter()
+                            .peekable();
+
+                        let trees: Vec<ParseTree> = Parser::new(&mut tokens)
+                            .globals(self.globals.to_owned())
+                            .locals(self.locals.to_owned())
+                            .collect::<Result<_, ParseError>>()?;
+
+                        let tree = trees.into_iter().fold(
+                            ParseTree::Nop,
+                            |acc, x| ParseTree::Compose(Box::new(acc), Box::new(x.clone())),
+                        );
+
+                        Ok(tree)
+                    }
+                    Op::Empty => Ok(ParseTree::Constant(Value::Array(Type::Any, vec![]))),
+                    Op::CloseArray => Err(ParseError::UnmatchedArrayClose),
+                    Op::NotEqualTo => Ok(ParseTree::NotEqualTo(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::And => Ok(ParseTree::And(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::Or => Ok(ParseTree::Or(Box::new(self.parse()?), Box::new(self.parse()?))),
+                    Op::LambdaDefine(arg_count) => {
+                        let f = self.parse_lambda(arg_count)?;
+                        Ok(ParseTree::LambdaDefinition(f))
+                    }
+                    Op::NonCall => {
+                        let name = Self::get_identifier(self.tokens.next())?;
+                        Ok(ParseTree::NonCall(name))
+                    },
+                    Op::Head => Ok(ParseTree::Head(Box::new(self.parse()?))),
+                    Op::Tail => Ok(ParseTree::Tail(Box::new(self.parse()?))),
+                    Op::Init => Ok(ParseTree::Init(Box::new(self.parse()?))),
+                    Op::Fini => Ok(ParseTree::Fini(Box::new(self.parse()?))),
+                    op => Err(ParseError::UnwantedToken(Token::Operator(op))),
+                }
+            }
+            t => Err(ParseError::UnwantedToken(t)),
         }
     }
 
@@ -316,10 +347,9 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
             .map(|_| Self::parse_function_declaration_parameter(tokens))
             .collect::<Result<_, _>>()?;
 
-        
         let (types, names): (Vec<_>, Vec<_>) = args.into_iter().unzip();
         let mut ret = Type::Any;
-        
+
         if tokens.next_if(|x| matches!(x, Ok(Token::Operator(Op::Arrow)))).is_some() {
             ret = Self::parse_type(tokens)?;
         }

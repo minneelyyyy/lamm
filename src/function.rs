@@ -41,11 +41,11 @@ impl Function {
         }
     }
 
-	pub fn name(&self) -> Option<&str> {
+	pub(crate) fn name(&self) -> Option<&str> {
 		self.name.as_ref().map(|x| x.as_str())
 	}
 
-	pub fn get_type(&self) -> FunctionType {
+	pub(crate) fn get_type(&self) -> FunctionType {
 		self.t.clone()
 	}
 

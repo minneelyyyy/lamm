@@ -375,6 +375,7 @@ where
                 Value::Array(_, x) => Ok(x.last().ok_or(RuntimeError::EmptyArray)?.clone()),
                 t => Err(RuntimeError::NoOverloadForTypes("fini".into(), vec![t]))
             },
+            ParseTree::Nop => Ok(Value::Nil),
         }
     }
 }
