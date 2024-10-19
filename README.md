@@ -45,7 +45,7 @@ Variables are **scoped** in Lamm, meaning they only exist in the single expressi
 
 Scope in Lamm consists of a single expression, such as `sqrt + ** a 2 ** b 2`. So then, what do I do when I need a variable for more than a single expression? There are multiple solutions depending on your needs.
 
-### Multi-Statement Expression (half implemented)
+### Multi-Statement Expression
 
 You can create a multi-statement expression using either `()` syntax or the `~` operator, which `()` is simple syntactic sugar for. In these, only the value of the last expression is returned, the rest get ignored. This is the perfect place to put stateful function calls.
 
