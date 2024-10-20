@@ -56,7 +56,7 @@ You can create a multi-statement expression using either `()` syntax or the `~` 
 )
 ```
 
-### Global Scope (unimplemented)
+### Global Scope
 
 You can introduce a variable to global scope using the `export` builtin function.
 

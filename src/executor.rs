@@ -49,7 +49,7 @@ where
     I: Iterator<Item = Result<ParseTree, ParseError>>
 {
     exprs: &'a mut I,
-    globals: HashMap<String, Object>,
+    globals: &'a mut HashMap<String, Object>,
     locals: HashMap<String, Object>,
 }
 
@@ -57,20 +57,15 @@ impl<'a, I> Executor<'a, I>
 where
     I: Iterator<Item = Result<ParseTree, ParseError>>,
 {
-    pub fn new(exprs: &'a mut I) -> Self {
+    pub fn new(exprs: &'a mut I, globals: &'a mut HashMap<String, Object>) -> Self {
         Self {
             exprs,
-            globals: HashMap::new(),
+            globals,
             locals: HashMap::new(),
         }
     }
 
-    pub fn globals(mut self, globals: HashMap<String, Object>) -> Self {
-        self.globals = globals;
-        self
-    }
-
-    pub fn _add_global(mut self, k: String, v: Object) -> Self {
+    pub fn _add_global(self, k: String, v: Object) -> Self {
         self.globals.insert(k, v);
         self
     }
@@ -237,11 +232,11 @@ where
                     Err(RuntimeError::ImmutableError(ident.clone()))
                 } else {
                     let value = self.exec(body)?;
+                    let g = self.globals.clone();
 
-                    Executor::new(self.exprs)
-                        .globals(self.globals.clone())
+                    Executor::new(self.exprs, &mut self.globals)
                         .locals(self.locals.clone())
-                        .add_local(ident, Object::value(value, self.globals.to_owned(), self.locals.to_owned()))
+                        .add_local(ident, Object::value(value, g, self.locals.to_owned()))
                         .exec(scope)
                 }
             },
@@ -249,18 +244,18 @@ where
                 if self.variable_exists(&ident) {
                     Err(RuntimeError::ImmutableError(ident.clone()))
                 } else {
-                    Executor::new(self.exprs)
-                        .globals(self.globals.clone())
+                    let g = self.globals.clone();
+                    Executor::new(self.exprs, &mut self.globals)
                         .locals(self.locals.clone())
-                        .add_local(ident, Object::variable(*body, self.globals.to_owned(), self.locals.to_owned()))
+                        .add_local(ident, Object::variable(*body, g, self.locals.to_owned()))
                         .exec(scope)
                 }
             },
             ParseTree::FunctionDefinition(func, scope) => {
-                Executor::new(self.exprs)
-                    .globals(self.globals.clone())
+                let g = self.globals.clone();
+                Executor::new(self.exprs, &mut self.globals)
                     .locals(self.locals.clone())
-                    .add_local(func.name().unwrap().to_string(), Object::function(func, self.globals.clone(), self.locals.clone()))
+                    .add_local(func.name().unwrap().to_string(), Object::function(func, g, self.locals.clone()))
                     .exec(scope)
             },
             ParseTree::Compose(x, y) => {
@@ -376,6 +371,14 @@ where
                 t => Err(RuntimeError::NoOverloadForTypes("fini".into(), vec![t]))
             },
             ParseTree::Nop => Ok(Value::Nil),
+            ParseTree::Export(names) => {
+                for name in names {
+                    let obj = self.locals.remove(&name).ok_or(RuntimeError::VariableUndefined(name.clone()))?;
+                    self.globals.insert(name, obj);
+                }
+
+                Ok(Value::Nil)
+            }
         }
     }
 }

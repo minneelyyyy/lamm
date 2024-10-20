@@ -84,6 +84,7 @@ pub enum Op {
     Tail,
     Init,
     Fini,
+    Export,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,6 +129,7 @@ impl Token {
             "tail" => Ok(Token::Operator(Op::Tail)),
             "init" => Ok(Token::Operator(Op::Init)),
             "fini" => Ok(Token::Operator(Op::Fini)),
+            "export" => Ok(Token::Operator(Op::Export)),
 
             // Types
             "Any" => Ok(Token::Type(Type::Any)),
@@ -411,5 +413,21 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
             },
             Err(e) => Some(Err(TokenizeError::IO(e))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn a() {
+        let program = ":. map : f .? x [Any] -> [Any]";
+
+        let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, _>>().unwrap();
+
+        println!("{tokens:?}");
     }
 }

@@ -13,7 +13,6 @@ use std::fmt::Display;
 use std::io::BufRead;
 use std::fmt;
 use std::iter::Peekable;
-use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub enum Type {
@@ -139,9 +138,8 @@ impl Object {
             Cache::Uncached(tree) => {
                 let mut tree = vec![Ok(tree)].into_iter();
 
-                let mut exec = Executor::new(&mut tree)
-                    .locals(self.locals.clone())
-                    .globals(self.globals.clone());
+                let mut exec = Executor::new(&mut tree, &mut self.globals)
+                    .locals(self.locals.clone());
 
                 let v = exec.next().unwrap()?;
 
@@ -163,21 +161,23 @@ impl Object {
 
 pub struct Runtime<'a, R: BufRead> {
     tokenizer: Peekable<Tokenizer<R>>,
+    global_types: HashMap<String, Type>,
+    globals: HashMap<String, Object>,
     parser: Option<Parser<'a, Tokenizer<R>>>,
-    phantom: PhantomData<Executor<'a, Parser<'a, Tokenizer<R>>>>,
 }
 
 impl<'a, R: BufRead> Runtime<'a, R> {
     pub fn new(reader: R) -> Self {
         Self {
             tokenizer: Tokenizer::new(reader).peekable(),
+            global_types: HashMap::new(),
+            globals: HashMap::new(),
             parser: None,
-            phantom: PhantomData,
         }
     }
 
     pub fn values(&'a mut self) -> impl Iterator<Item = Result<Value, RuntimeError>> + 'a {
-        self.parser = Some(Parser::new(&mut self.tokenizer));
-        Executor::new(self.parser.as_mut().unwrap())
+        self.parser = Some(Parser::new(&mut self.tokenizer, &mut self.global_types));
+        Executor::new(self.parser.as_mut().unwrap(), &mut self.globals)
     }
 }

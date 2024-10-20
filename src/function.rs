@@ -50,22 +50,22 @@ impl Function {
 	}
 
 	pub(crate) fn call(&mut self,
-                globals: HashMap<String, Object>,
+                mut globals: HashMap<String, Object>,
                 locals: HashMap<String, Object>,
                 args: Vec<Object>) -> Result<Value, RuntimeError>
     {
         let mut tree = vec![Ok(*self.body.clone())].into_iter();
+        let g = globals.clone();
 
-        let mut exec = Executor::new(&mut tree)
-            .locals(locals.clone())
-            .globals(globals.clone());
+        let mut exec = Executor::new(&mut tree, &mut globals)
+            .locals(locals.clone());
 
         for (obj, name) in std::iter::zip(args.into_iter(), self.arg_names.clone().into_iter()) {
             exec = exec.add_local(name.clone(), obj);
         }
 
         if let Some(name) = self.name().map(|x| x.to_string()) {
-            exec = exec.add_local(name, Object::function(self.clone(), globals, locals));
+            exec = exec.add_local(name, Object::function(self.clone(), g, locals));
         }
 
         exec.next().unwrap()

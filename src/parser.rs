@@ -1,7 +1,10 @@
 
+use crate::executor::Executor;
+
 use super::{Value, Type, Function, FunctionType};
 use super::tokenizer::{Token, TokenizeError, Op};
 
+use std::borrow::{BorrowMut, Cow};
 use std::error;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -90,31 +93,32 @@ pub(crate) enum ParseTree {
     // Misc
     Print(Box<ParseTree>),
     Nop,
+    Export(Vec<String>),
 }
 
 /// Parses input tokens and produces ParseTrees for an Executor
 pub(crate) struct Parser<'a, I: Iterator<Item = Result<Token, TokenizeError>>> {
     tokens: &'a mut Peekable<I>,
-    globals: HashMap<String, Type>,
+    globals: &'a mut HashMap<String, Type>,
     locals: HashMap<String, Type>,
 }
 
 impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
-    pub fn new(tokens: &'a mut Peekable<I>) -> Self {
+    pub fn new(tokens: &'a mut Peekable<I>, globals: &'a mut HashMap<String, Type>) -> Self {
         Self {
             tokens: tokens,
-            globals: HashMap::new(),
+            globals,
             locals: HashMap::new()
         }
     }
 
-    pub fn globals(mut self, globals: HashMap<String, Type>) -> Self {
-        self.globals = globals;
+    pub fn add_global(self, k: String, v: Type) -> Self {
+        self.globals.insert(k, v);
         self
     }
 
-    pub fn _add_global(mut self, k: String, v: Type) -> Self {
-        self.globals.insert(k, v);
+    pub fn add_globals<Items: Iterator<Item = (String, Type)>>(self, items: Items) -> Self {
+        items.for_each(|(name, t)| _ = self.globals.insert(name, t));
         self
     }
 
@@ -128,9 +132,18 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
         self
     }
 
+    pub fn add_locals<Items: Iterator<Item = (String, Type)>>(mut self, items: Items) -> Self {
+        items.for_each(|(name, t)| _ = self.locals.insert(name, t));
+        self
+    }
+
     fn get_object_type(&self, ident: &String) -> Result<&Type, ParseError> {
         self.locals.get(ident).or(self.globals.get(ident))
             .ok_or(ParseError::IdentifierUndefined(ident.clone()))
+    }
+
+    fn get_object_types<Names: Iterator<Item = String>>(&self, items: Names) -> impl Iterator<Item = Result<&Type, ParseError>> {
+        items.map(|x| self.get_object_type(&x))
     }
 
     fn parse(&mut self) -> Result<ParseTree, ParseError> {
@@ -165,18 +178,16 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                         if let Token::Identifier(ident) = token {
                             match op {
                                 Op::Equ => Ok(ParseTree::Equ(ident.clone(),
-                                    body.clone(),
-                                    Box::new(Parser::new(self.tokens.by_ref())
+                                    body,
+                                    Box::new(Parser::new(self.tokens.by_ref(), self.globals.borrow_mut())
                                         .locals(self.locals.clone())
-                                        .globals(self.globals.clone())
                                         .add_local(ident, Type::Any)
                                         .parse()?))
                                 ),
                                 Op::LazyEqu => Ok(ParseTree::LazyEqu(ident.clone(),
-                                    body.clone(),
-                                    Box::new(Parser::new(self.tokens.by_ref())
+                                    body,
+                                    Box::new(Parser::new(self.tokens.by_ref(), self.globals.borrow_mut())
                                         .locals(self.locals.clone())
-                                        .globals(self.globals.clone())
                                         .add_local(ident, Type::Any)
                                         .parse()?))
                                 ),
@@ -191,8 +202,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
 
                         Ok(ParseTree::FunctionDefinition(f.clone(),
                             Box::new(
-                                Parser::new(self.tokens)
-                                .globals(self.globals.clone())
+                                Parser::new(self.tokens, self.globals.borrow_mut())
                                 .locals(self.locals.clone())
                                 .add_local(f.name().unwrap().to_string(), Type::Function(f.get_type()))
                                 .parse()?
@@ -237,8 +247,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                             .into_iter()
                             .peekable();
 
-                        let trees: Vec<ParseTree> = Parser::new(&mut array_tokens)
-                            .globals(self.globals.to_owned())
+                        let trees: Vec<ParseTree> = Parser::new(&mut array_tokens, self.globals.borrow_mut())
                             .locals(self.locals.to_owned())
                             .collect::<Result<_, ParseError>>()?;
 
@@ -273,8 +282,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                             .into_iter()
                             .peekable();
 
-                        let trees: Vec<ParseTree> = Parser::new(&mut tokens)
-                            .globals(self.globals.to_owned())
+                        let trees: Vec<ParseTree> = Parser::new(&mut tokens, self.globals.borrow_mut())
                             .locals(self.locals.to_owned())
                             .collect::<Result<_, ParseError>>()?;
 
@@ -302,6 +310,27 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                     Op::Tail => Ok(ParseTree::Tail(Box::new(self.parse()?))),
                     Op::Init => Ok(ParseTree::Init(Box::new(self.parse()?))),
                     Op::Fini => Ok(ParseTree::Fini(Box::new(self.parse()?))),
+                    Op::Export => {
+                        let list = self.parse()?;
+                        let mut g = HashMap::new();
+                        let list = Executor::new(&mut vec![Ok(list)].into_iter(), &mut g).next().unwrap().map_err(|_| ParseError::NoInput)?;
+
+                        if let Value::Array(Type::String, items) = list {
+                            let names = items.into_iter().map(|x| match x {
+                                Value::String(s) => s,
+                                _ => unreachable!(),
+                            });
+
+                            for name in names.clone() {
+                                let t = self.locals.remove(&name).ok_or(ParseError::IdentifierUndefined(name.clone()))?;
+                                self.globals.insert(name, t);
+                            }
+
+                            Ok(ParseTree::Export(names.collect()))
+                        } else {
+                            Err(ParseError::NoInput)
+                        }
+                    }
                     op => Err(ParseError::UnwantedToken(Token::Operator(op))),
                 }
             }
@@ -319,8 +348,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
         }
 
         Ok(Function::lambda(t, args, Box::new(
-            Parser::new(self.tokens)
-                .globals(self.globals.clone())
+            Parser::new(self.tokens, &mut self.globals)
                 .locals(locals).parse()?)))
     }
 
@@ -337,8 +365,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
         locals.insert(name.clone(), Type::Function(t.clone()));
 
         Ok(Function::named(&name, t, args, Box::new(
-            Parser::new(self.tokens)
-                .globals(self.globals.clone())
+            Parser::new(self.tokens, &mut self.globals)
                 .locals(locals).parse()?)))
     }
 
