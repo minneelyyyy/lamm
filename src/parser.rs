@@ -446,6 +446,23 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                 Ok(Type::Function(FunctionType(Box::new(rett), args.clone())))
             },
             Some(Ok(Token::Operator(Op::OpenArray))) => {
+                let mut depth = 1;
+                let array_tokens = tokens.by_ref().take_while(|t| match t {
+                    Ok(Token::Operator(Op::OpenArray)) => {
+                        depth += 1;
+                        true
+                    },
+                    Ok(Token::Operator(Op::CloseArray)) => {
+                        depth -= 1;
+                        depth > 0
+                    }
+                    _ => true,
+                }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
+
+                if array_tokens.len() == 0 {
+                    return Ok(Type::Array(Box::new(Type::Any)));
+                }
+
                 let t = Self::parse_type(tokens)?;
                 let _ = match tokens.next() {
                     Some(Ok(Token::Operator(Op::CloseArray))) => (),
