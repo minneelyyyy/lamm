@@ -316,12 +316,17 @@ where
                 self.exec(isfalse)
             },
             ParseTree::FunctionCall(ident, args) => {
-                let args = args.into_iter().map(|x| Object::variable(x, self.globals.clone(), self.locals.clone())).collect();
                 let obj = self.get_object_mut(&ident)?;
                 let v = Self::eval(obj)?;
 
                 match v {
-                    Value::Function(mut f) => f.call(Self::obj_globals(obj), Self::obj_locals(obj), args),
+                    Value::Function(mut f) => {
+                        let args = args.into_iter()
+                            .map(|x| Object::variable(x, self.globals.clone(), self.locals.clone()))
+                            .collect();
+
+                        f.call(Self::obj_globals(obj), Self::obj_locals(obj), args)
+                    },
                     _ => Err(RuntimeError::FunctionUndefined(ident.clone()))
                 }
             },
