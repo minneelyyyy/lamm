@@ -13,7 +13,7 @@ use std::fmt::Display;
 use std::io::BufRead;
 use std::fmt;
 use std::iter::Peekable;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 
 #[derive(Clone, Debug)]
@@ -101,15 +101,21 @@ enum Cache {
     Uncached(ParseTree),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct Object {
-    locals: HashMap<String, Arc<RefCell<Object>>>,
-    globals: HashMap<String, Arc<RefCell<Object>>>,
+    locals: HashMap<String, Arc<Mutex<Object>>>,
+    globals: HashMap<String, Arc<Mutex<Object>>>,
     value: Cache,
 }
 
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
 impl Object {
-    pub fn variable(tree: ParseTree, globals: HashMap<String, Arc<RefCell<Object>>>, locals: HashMap<String, Arc<RefCell<Object>>>) -> Self {
+    pub fn variable(tree: ParseTree, globals: HashMap<String, Arc<Mutex<Object>>>, locals: HashMap<String, Arc<Mutex<Object>>>) -> Self {
         Self {
             locals,
             globals,
@@ -117,7 +123,7 @@ impl Object {
         }
     }
 
-    pub fn value(v: Value, globals: HashMap<String, Arc<RefCell<Object>>>, locals: HashMap<String, Arc<RefCell<Object>>>) -> Self {
+    pub fn value(v: Value, globals: HashMap<String, Arc<Mutex<Object>>>, locals: HashMap<String, Arc<Mutex<Object>>>) -> Self {
         Self {
             locals,
             globals,
@@ -125,7 +131,7 @@ impl Object {
         }
     }
 
-    pub fn function(func: Function, globals: HashMap<String, Arc<RefCell<Object>>>, locals: HashMap<String, Arc<RefCell<Object>>>) -> Self {
+    pub fn function(func: Function, globals: HashMap<String, Arc<Mutex<Object>>>, locals: HashMap<String, Arc<Mutex<Object>>>) -> Self {
         Self {
             locals,
             globals,
@@ -152,11 +158,11 @@ impl Object {
         }
     }
 
-    pub fn locals(&self) -> HashMap<String, Arc<RefCell<Object>>> {
+    pub fn locals(&self) -> HashMap<String, Arc<Mutex<Object>>> {
         self.locals.clone()
     }
 
-    pub fn globals(&self) -> HashMap<String, Arc<RefCell<Object>>> {
+    pub fn globals(&self) -> HashMap<String, Arc<Mutex<Object>>> {
         self.globals.clone()
     }
 }
@@ -164,7 +170,7 @@ impl Object {
 pub struct Runtime<'a, R: BufRead> {
     tokenizer: Peekable<Tokenizer<R>>,
     global_types: HashMap<String, Type>,
-    globals: HashMap<String, Arc<RefCell<Object>>>,
+    globals: HashMap<String, Arc<Mutex<Object>>>,
     parser: Option<Parser<'a, Tokenizer<R>>>,
 }
 
