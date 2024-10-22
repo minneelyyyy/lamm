@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::error::Error;
 use std::io;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Debug)]
 pub enum RuntimeError {
@@ -49,15 +51,15 @@ where
     I: Iterator<Item = Result<ParseTree, ParseError>>
 {
     exprs: &'a mut I,
-    globals: &'a mut HashMap<String, Object>,
-    locals: HashMap<String, Object>,
+    globals: &'a mut HashMap<String, Rc<RefCell<Object>>>,
+    locals: HashMap<String, Rc<RefCell<Object>>>,
 }
 
 impl<'a, I> Executor<'a, I>
 where
     I: Iterator<Item = Result<ParseTree, ParseError>>,
 {
-    pub fn new(exprs: &'a mut I, globals: &'a mut HashMap<String, Object>) -> Self {
+    pub fn new(exprs: &'a mut I, globals: &'a mut HashMap<String, Rc<RefCell<Object>>>) -> Self {
         Self {
             exprs,
             globals,
@@ -65,27 +67,27 @@ where
         }
     }
 
-    pub fn _add_global(self, k: String, v: Object) -> Self {
+    pub fn _add_global(self, k: String, v: Rc<RefCell<Object>>) -> Self {
         self.globals.insert(k, v);
         self
     }
 
-    pub fn locals(mut self, locals: HashMap<String, Object>) -> Self {
+    pub fn locals(mut self, locals: HashMap<String, Rc<RefCell<Object>>>) -> Self {
         self.locals = locals;
         self
     }
 
-    pub fn add_local(mut self, k: String, v: Object) -> Self {
+    pub fn add_local(mut self, k: String, v: Rc<RefCell<Object>>) -> Self {
         self.locals.insert(k, v);
         self
     }
 
-    fn _get_object(&self, ident: &String) -> Result<&Object, RuntimeError> {
+    fn _get_object(&self, ident: &String) -> Result<&Rc<RefCell<Object>>, RuntimeError> {
         self.locals.get(ident).or(self.globals.get(ident))
             .ok_or(RuntimeError::VariableUndefined(ident.clone()))
     }
 
-    fn get_object_mut(&mut self, ident: &String) -> Result<&mut Object, RuntimeError> {
+    fn get_object_mut(&mut self, ident: &String) -> Result<&mut Rc<RefCell<Object>>, RuntimeError> {
         self.locals.get_mut(ident).or(self.globals.get_mut(ident))
             .ok_or(RuntimeError::VariableUndefined(ident.clone()))
     }
@@ -236,7 +238,7 @@ where
 
                     Executor::new(self.exprs, &mut self.globals)
                         .locals(self.locals.clone())
-                        .add_local(ident, Object::value(value, g, self.locals.to_owned()))
+                        .add_local(ident, Rc::new(RefCell::new(Object::value(value, g, self.locals.to_owned()))))
                         .exec(scope)
                 }
             },
@@ -247,7 +249,7 @@ where
                     let g = self.globals.clone();
                     Executor::new(self.exprs, &mut self.globals)
                         .locals(self.locals.clone())
-                        .add_local(ident, Object::variable(*body, g, self.locals.to_owned()))
+                        .add_local(ident, Rc::new(RefCell::new(Object::variable(*body, g, self.locals.to_owned()))))
                         .exec(scope)
                 }
             },
@@ -255,7 +257,7 @@ where
                 let g = self.globals.clone();
                 Executor::new(self.exprs, &mut self.globals)
                     .locals(self.locals.clone())
-                    .add_local(func.name().unwrap().to_string(), Object::function(func, g, self.locals.clone()))
+                    .add_local(func.name().unwrap().to_string(), Rc::new(RefCell::new(Object::function(func, g, self.locals.clone()))))
                     .exec(scope)
             },
             ParseTree::Compose(x, y) => {
@@ -292,17 +294,17 @@ where
             ParseTree::FunctionCall(ident, args) => {
                 let args = args.into_iter().map(|x| Object::variable(x, self.globals.clone(), self.locals.clone())).collect();
                 let obj = self.get_object_mut(&ident)?;
-                let v = obj.eval()?;
+                let v = obj.borrow_mut().eval()?;
 
                 match v {
-                    Value::Function(mut f) => f.call(obj.globals(), obj.locals(), args),
+                    Value::Function(mut f) => f.call(obj.borrow().globals(), obj.borrow().locals(), args),
                     _ => Err(RuntimeError::FunctionUndefined(ident.clone()))
                 }
             },
             ParseTree::Variable(ident) => {
                 let obj = self.get_object_mut(&ident)?;
 
-                let v = obj.eval()?;
+                let v = obj.borrow_mut().eval()?;
 
                 Ok(v)
             },
@@ -350,7 +352,7 @@ where
             ParseTree::NonCall(name) => {
                 let obj = self.get_object_mut(&name)?;
 
-                let v = obj.eval()?;
+                let v = obj.borrow_mut().eval()?;
 
                 Ok(v)
             }

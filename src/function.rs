@@ -1,9 +1,11 @@
+use std::cell::RefCell;
 use crate::parser::ParseTree;
 use crate::executor::{Executor, RuntimeError};
 use crate::{Type, Object, Value};
 
 use std::collections::HashMap;
 use std::fmt::{self, Display};
+use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionType(pub Box<Type>, pub Vec<Type>);
@@ -50,8 +52,8 @@ impl Function {
 	}
 
 	pub(crate) fn call(&mut self,
-                mut globals: HashMap<String, Object>,
-                locals: HashMap<String, Object>,
+                mut globals: HashMap<String, Rc<RefCell<Object>>>,
+                locals: HashMap<String, Rc<RefCell<Object>>>,
                 args: Vec<Object>) -> Result<Value, RuntimeError>
     {
         let mut tree = vec![Ok(*self.body.clone())].into_iter();
@@ -61,11 +63,11 @@ impl Function {
             .locals(locals.clone());
 
         for (obj, name) in std::iter::zip(args.into_iter(), self.arg_names.clone().into_iter()) {
-            exec = exec.add_local(name.clone(), obj);
+            exec = exec.add_local(name.clone(), Rc::new(RefCell::new(obj)));
         }
 
         if let Some(name) = self.name().map(|x| x.to_string()) {
-            exec = exec.add_local(name, Object::function(self.clone(), g, locals));
+            exec = exec.add_local(name, Rc::new(RefCell::new(Object::function(self.clone(), g, locals))));
         }
 
         exec.next().unwrap()

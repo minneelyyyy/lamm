@@ -4,7 +4,7 @@ use crate::executor::Executor;
 use super::{Value, Type, Function, FunctionType};
 use super::tokenizer::{Token, TokenizeError, Op};
 
-use std::borrow::{BorrowMut, Cow};
+use std::borrow::BorrowMut;
 use std::error;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -106,7 +106,7 @@ pub(crate) struct Parser<'a, I: Iterator<Item = Result<Token, TokenizeError>>> {
 impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
     pub fn new(tokens: &'a mut Peekable<I>, globals: &'a mut HashMap<String, Type>) -> Self {
         Self {
-            tokens: tokens,
+            tokens,
             globals,
             locals: HashMap::new()
         }
