@@ -184,7 +184,11 @@ impl<'a, R: BufRead> Runtime<'a, R> {
             globals: HashMap::from([
                 ("version'".into(), Arc::new(
                     Mutex::new(
-                        Object::value(Value::String(env!("CARGO_PKG_VERSION").into()), HashMap::new(), HashMap::new()))))
+                        Object::value(Value::String(
+                            format!("{} ({}/{})",
+                                    env!("CARGO_PKG_VERSION"),
+                                    env!("GIT_BRANCH"),
+                                    env!("GIT_HASH"))), HashMap::new(), HashMap::new()))))
             ]),
             parser: None,
         }
