@@ -178,8 +178,14 @@ impl<'a, R: BufRead> Runtime<'a, R> {
     pub fn new(reader: R) -> Self {
         Self {
             tokenizer: Tokenizer::new(reader).peekable(),
-            global_types: HashMap::new(),
-            globals: HashMap::new(),
+            global_types: HashMap::from([
+                ("version'".into(), Type::String)
+            ]),
+            globals: HashMap::from([
+                ("version'".into(), Arc::new(
+                    Mutex::new(
+                        Object::value(Value::String(env!("CARGO_PKG_VERSION").into()), HashMap::new(), HashMap::new()))))
+            ]),
             parser: None,
         }
     }
