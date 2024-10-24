@@ -169,29 +169,29 @@ bool empty      # => false
 Using these, you can build a lot of fundamental functional paradigm functions.
 
 ```
-:. map ?: f Any -> Any ?. x [Any] -> [Any]
+:. map : f ?. x [] -> []
 	?? bool x
 		+ f head x map 'f tail x
 		empty
-map ;y ** y 2 [1 2 3 4 5 6 7 8 9 10]  # => [1 4 9 16 25 36 49 64 81 100]
+map ;x ** x 2 [1 2 3 4 5 6 7 8 9 10]  # => [1 4 9 16 25 36 49 64 81 100]
 
-:: iterate : f i count -> [Any]
+:: iterate : f i count -> []
 	?? > count 0 
 		+ i iterate 'f f i - count 1
 		empty
 iterate ;x + 1 x 0 10  # => [0 1 2 3 4 5 6 7 8 9]
 
-:. take ?. n Int ?. x [Any] -> [Any]
+:. take ?. n Int ?. x [] -> []
 	?? > n 0
 		+ head x take - n 1 tail x
 		empty
 take 3 [1 2 3 4 5]  # => [1 2 3]
 
-:. take'while : pred Any -> Bool ?. x [Any] -> [Any]
+:. take'while ?: pred Any -> Bool ?. x [] -> []
 	?? && bool x pred head x
 		+ head x take'while 'pred tail x
 		empty
-take'while ;y < y 10 [1 3 5 7 9 11 13 15 16]  # => [1 3 5 7 9]
+take'while ;x < x 10 [1 3 5 7 9 11 13 15 16]  # => [1 3 5 7 9]
 ```
 
 ## Lambdas
