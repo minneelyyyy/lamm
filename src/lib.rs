@@ -14,7 +14,6 @@ use std::io::BufRead;
 use std::fmt;
 use std::iter::Peekable;
 use std::sync::{Arc, Mutex};
-use std::cell::RefCell;
 
 #[derive(Clone, Debug)]
 pub enum Type {
@@ -139,7 +138,7 @@ impl Object {
         }
     }
 
-    /// evaluate the tree inside of an object if it isn't evaluated yet, returns the value
+    /// evaluate the tree inside an object if it isn't evaluated yet, returns the value
     pub fn eval(&mut self) -> Result<Value, RuntimeError> {
         match self.value.clone() {
             Cache::Cached(v) => Ok(v),
@@ -176,20 +175,27 @@ pub struct Runtime<'a, R: BufRead> {
 
 impl<'a, R: BufRead> Runtime<'a, R> {
     pub fn new(reader: R) -> Self {
+        let globals: HashMap<String, Object> = HashMap::from([
+            ("version'".into(), Object::value(Value::String(
+                        format!("{} ({}/{})",
+                                env!("CARGO_PKG_VERSION"),
+                                env!("GIT_BRANCH"),
+                                env!("GIT_HASH"))), HashMap::new(), HashMap::new()))
+        ]);
+
         Self {
             tokenizer: Tokenizer::new(reader).peekable(),
-            global_types: HashMap::from([
-                ("version'".into(), Type::String)
-            ]),
-            globals: HashMap::from([
-                ("version'".into(), Arc::new(
-                    Mutex::new(
-                        Object::value(Value::String(
-                            format!("{} ({}/{})",
-                                    env!("CARGO_PKG_VERSION"),
-                                    env!("GIT_BRANCH"),
-                                    env!("GIT_HASH"))), HashMap::new(), HashMap::new()))))
-            ]),
+            global_types:
+                globals
+                    .clone()
+                    .into_iter()
+                    .map(|(key, mut value)| (key, value.eval().unwrap().get_type()))
+                    .collect(),
+            globals:
+                globals
+                    .into_iter()
+                    .map(|(key, value)| (key, Arc::new(Mutex::new(value))))
+                    .collect(),
             parser: None,
         }
     }
