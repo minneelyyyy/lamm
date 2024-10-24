@@ -112,13 +112,16 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
         }
     }
 
+
     pub fn add_global(self, k: String, v: Type) -> Self {
         self.globals.insert(k, v);
         self
     }
 
     pub fn add_globals<Items: Iterator<Item = (String, Type)>>(self, items: Items) -> Self {
-        items.for_each(|(name, t)| _ = self.globals.insert(name, t));
+        items.for_each(|(name, t)| {
+            self.globals.insert(name, t);
+        });
         self
     }
 
@@ -133,7 +136,9 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
     }
 
     pub fn add_locals<Items: Iterator<Item = (String, Type)>>(mut self, items: Items) -> Self {
-        items.for_each(|(name, t)| _ = self.locals.insert(name, t));
+        items.for_each(|(name, t)| {
+            self.locals.insert(name, t);
+        });
         self
     }
 
@@ -369,22 +374,27 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                 .locals(locals).parse()?)))
     }
 
-    fn parse_function_declaration(tokens: &mut Peekable<I>, arg_count: usize) -> Result<(FunctionType, Vec<String>), ParseError> {
+    fn parse_function_declaration(
+        tokens: &mut Peekable<I>,
+        arg_count: usize) -> Result<(FunctionType, Vec<String>), ParseError>
+    {
         let args: Vec<(Type, String)> = (0..arg_count)
             .map(|_| Self::parse_function_declaration_parameter(tokens))
             .collect::<Result<_, _>>()?;
 
         let (types, names): (Vec<_>, Vec<_>) = args.into_iter().unzip();
-        let mut ret = Type::Any;
-
-        if tokens.next_if(|x| matches!(x, Ok(Token::Operator(Op::Arrow)))).is_some() {
-            ret = Self::parse_type(tokens)?;
-        }
+        let ret = if tokens.next_if(|x| matches!(x, Ok(Token::Operator(Op::Arrow)))).is_some() {
+            Self::parse_type(tokens)?
+        } else {
+            Type::Any
+        };
 
         Ok((FunctionType(Box::new(ret), types), names))
     }
 
-    fn parse_function_declaration_parameter(mut tokens: &mut Peekable<I>) -> Result<(Type, String), ParseError> {
+    fn parse_function_declaration_parameter(
+        mut tokens: &mut Peekable<I>) -> Result<(Type, String), ParseError>
+    {
         match tokens.next() {
             // untyped variable
             Some(Ok(Token::Identifier(x))) => Ok((Type::Any, x)),
@@ -412,7 +422,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                 let mut ret = Type::Any;
 
                 // this is annoying
-                // inside of the next_if closure, we already can know that its an error
+                // inside the next_if closure, we already can know that its an error
                 // and return it, but we cannot return out of a closure
                 if let Some(t) = tokens.next_if(|x| matches!(x, Ok(Token::Operator(Op::Arrow))))
                 {
@@ -433,20 +443,16 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
         }
     }
 
-    fn parse_type(tokens: &mut Peekable<I>) -> Result<Type, ParseError> {
+    // for some dumbass reason,
+    // this is the only code that breaks if it doesn't take an impl Iterator instead of simply I ...
+    fn parse_type(tokens: &mut Peekable<impl Iterator<Item = Result<Token, TokenizeError>>>) -> Result<Type, ParseError> {
         match tokens.next() {
             Some(Ok(Token::Type(t))) => Ok(t),
-            Some(Ok(Token::Operator(Op::FunctionDefine(n)))) => {
-                let args: Vec<Type> = (0..n)
-                    .map(|_| Self::parse_type(tokens))
-                    .collect::<Result<_, ParseError>>()?;
-
-                let rett = Self::parse_type(tokens)?;
-
-                Ok(Type::Function(FunctionType(Box::new(rett), args.clone())))
-            },
             Some(Ok(Token::Operator(Op::OpenArray))) => {
                 let mut depth = 1;
+
+                // take tokens until we reach the end of this array
+                // if we don't collect them here it causes rust to overflow computing the types
                 let array_tokens = tokens.by_ref().take_while(|t| match t {
                     Ok(Token::Operator(Op::OpenArray)) => {
                         depth += 1;
@@ -459,18 +465,25 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                     _ => true,
                 }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
 
-                if array_tokens.len() == 0 {
-                    return Ok(Type::Array(Box::new(Type::Any)));
-                }
+                // ... thanks to this conversion here. The compiler complains that the types don't
+                // match. there is code elsewhere in this codebase that looks exactly like this and
+                // still simply uses &mut Peekable<I> as the type. I don't understand why this code
+                // is special, but we have to do horribleness for it to work.
+                let mut array_tokens = array_tokens
+                    .into_iter()
+                    .map(|t| Ok(t))
+                    .collect::<Vec<Result<Token, TokenizeError>>>()
+                    .into_iter()
+                    .peekable();
 
-                let t = Self::parse_type(tokens)?;
-                let _ = match tokens.next() {
-                    Some(Ok(Token::Operator(Op::CloseArray))) => (),
-                    _ => return Err(ParseError::UnmatchedArrayClose),
+                let t = match Self::parse_type(&mut array_tokens) {
+                    Ok(t) => t,
+                    Err(ParseError::UnexpectedEndInput) => Type::Any,
+                    Err(e) => return Err(e),
                 };
 
                 Ok(Type::Array(Box::new(t)))
-            }
+            },
             Some(Ok(t)) => Err(ParseError::UnwantedToken(t.clone())),
             Some(Err(e)) => Err(ParseError::TokenizeError(e)),
             None => Err(ParseError::UnexpectedEndInput),

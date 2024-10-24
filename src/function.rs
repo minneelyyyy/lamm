@@ -18,7 +18,7 @@ impl Display for FunctionType {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     t: FunctionType,
     arg_names: Vec<String>,
     body: Box<ParseTree>,

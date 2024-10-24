@@ -317,6 +317,8 @@ where
             },
             ParseTree::FunctionCall(ident, args) => {
                 let obj = self.get_object_mut(&ident)?;
+                let globals = Self::obj_globals(obj);
+                let locals = Self::obj_locals(obj);
                 let v = Self::eval(obj)?;
 
                 match v {
@@ -325,7 +327,7 @@ where
                             .map(|x| Object::variable(x, self.globals.clone(), self.locals.clone()))
                             .collect();
 
-                        f.call(Self::obj_globals(obj), Self::obj_locals(obj), args)
+                        f.call(globals, locals, args)
                     },
                     _ => Err(RuntimeError::FunctionUndefined(ident.clone()))
                 }

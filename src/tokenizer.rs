@@ -419,15 +419,28 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
-
+    use crate::parser::Parser;
     use super::*;
 
     #[test]
-    fn a() {
-        let program = ":. map : f .? x [Any] -> [Any]";
+    fn tokenizer() {
+        let program = ": length ?. x [] -> Int ?? x + 1 length tail x 0 length [ 1 2 3 ]";
 
         let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, _>>().unwrap();
 
-        println!("{tokens:?}");
+        println!("{tokens:#?}");
+    }
+
+    #[test]
+    fn a() {
+        let program = ": length ?. x [] -> Int ?? x + 1 length tail x 0 length [ 1 2 3 ]";
+
+        let mut tokenizer = Tokenizer::from_str(program).unwrap().peekable();
+
+        let mut globals = HashMap::new();
+        let mut parser = Parser::new(&mut tokenizer, &mut globals);
+
+        let tree = parser.next();
+        println!("{tree:#?}");
     }
 }
