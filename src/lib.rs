@@ -175,29 +175,29 @@ pub struct Runtime<'a, R: BufRead> {
 
 impl<'a, R: BufRead> Runtime<'a, R> {
     pub fn new(reader: R) -> Self {
-        let globals: HashMap<String, Object> = HashMap::from([
-            ("version'".into(), Object::value(Value::String(
-                        format!("{} ({}/{})",
-                                env!("CARGO_PKG_VERSION"),
-                                env!("GIT_BRANCH"),
-                                env!("GIT_HASH"))), HashMap::new(), HashMap::new()))
-        ]);
-
         Self {
             tokenizer: Tokenizer::new(reader).peekable(),
-            global_types:
-                globals
-                    .clone()
-                    .into_iter()
-                    .map(|(key, mut value)| (key, value.eval().unwrap().get_type()))
-                    .collect(),
-            globals:
-                globals
-                    .into_iter()
-                    .map(|(key, value)| (key, Arc::new(Mutex::new(value))))
-                    .collect(),
+            global_types: HashMap::new(),
+            globals: HashMap::new(),
             parser: None,
-        }
+        }.add_global("version'", Value::String(
+                format!("{} ({}/{})",
+                        env!("CARGO_PKG_VERSION"),
+                        env!("GIT_BRANCH"),
+                        env!("GIT_HASH")
+                )
+        ))
+    }
+
+    pub fn add_global(mut self, name: &str, value: Value) -> Self {
+        self.global_types.insert(name.to_string(), value.get_type());
+        self.globals.insert(name.to_string(),
+                            Arc::new(Mutex::new(Object::value(
+                                value,
+                                HashMap::new(),
+                                HashMap::new()))));
+
+        self
     }
 
     pub fn values(&'a mut self) -> impl Iterator<Item = Result<Value, RuntimeError>> + 'a {
