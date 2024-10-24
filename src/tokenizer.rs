@@ -1,6 +1,8 @@
 use std::iter::Peekable;
 use std::{error, io};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
+
+use crate::Type;
 
 use super::Value;
 use std::fmt::{Display, Formatter};
@@ -39,8 +41,8 @@ impl Display for TokenizeError {
 
 impl error::Error for TokenizeError {}
 
-#[derive(Debug, Clone)]
-pub(crate) enum Op {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Op {
     Add,
     Sub,
     Mul,
@@ -49,7 +51,11 @@ pub(crate) enum Op {
     Equ,
     Mod,
     LazyEqu,
+    TypeDeclaration,
+    FunctionDefine(usize),
     FunctionDeclare(usize),
+    LambdaDefine(usize),
+    Arrow,
     Compose,
     Id,
     If,
@@ -57,6 +63,7 @@ pub(crate) enum Op {
     GreaterThan,
     LessThan,
     EqualTo,
+    NotEqualTo,
     GreaterThanOrEqualTo,
     LessThanOrEqualTo,
     Not,
@@ -64,85 +71,87 @@ pub(crate) enum Op {
     FloatCast,
     BoolCast,
     StringCast,
+    Print,
+    OpenArray,
+    CloseArray,
+    OpenStatement,
+    CloseStatement,
+    Empty,
+    And,
+    Or,
+    NonCall,
+    Head,
+    Tail,
+    Init,
+    Fini,
+    Export,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum Token {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
     Identifier(String),
     Operator(Op),
     Constant(Value),
+    Type(Type),
 }
 
-fn get_dot_count(s: &str) -> Option<usize> {
-    s.chars().fold(Some(0), |acc, c|
-        match c {
-            ':' => acc.map(|acc| acc + 2),
-            '.' => acc.map(|acc| acc + 1),
-            _ => None,
-        }
-    )
+fn get_dot_count<I: Iterator<Item = char>>(s: &mut Peekable<I>) -> Option<usize> {
+    let mut total = 0;
+
+    while let Some(n) = s.next_if(|&c| c == ':' || c == '.').map(|c| match c {
+        ':' => 2,
+        '.' => 1,
+        _ => 0,
+    }) {
+        total += n;
+    }
+
+    Some(total)
 }
 
 impl Token {
     /// Parse a single token
     fn parse(s: &str) -> Result<Self, TokenizeError> {
-        let string = regex::Regex::new(r#"".+""#).map_err(|e| TokenizeError::Regex(e))?;
         let identifier = regex::Regex::new(r#"[A-Za-z_][A-Za-z0-9_']*"#).map_err(|e| TokenizeError::Regex(e))?;
         let number = regex::Regex::new(r#"([0-9]+\.?[0-9]*)|(\.[0-9])"#).map_err(|e| TokenizeError::Regex(e))?;
 
-        if string.is_match(s) {
-            Ok(Token::Constant(Value::String(s[1..s.len() - 1].to_string())))
-        } else if identifier.is_match(s) {
-            Ok(Token::Identifier(s.to_string()))
-        } else if number.is_match(s) {
-            if let Ok(int) = s.parse::<i64>() {
-                Ok(Token::Constant(Value::Int(int)))
-            } else if let Ok(float) = s.parse::<f64>() {
-                Ok(Token::Constant(Value::Float(float)))
-            } else {
-                Err(TokenizeError::InvalidNumericConstant(s.to_string()))
-            }
-        } else {
-            match s {
-                // First check if s is an operator
-                "+"  => Ok(Token::Operator(Op::Add)),
-                "-"  => Ok(Token::Operator(Op::Sub)),
-                "*"  => Ok(Token::Operator(Op::Mul)),
-                "/"  => Ok(Token::Operator(Op::Div)),
-                "**" => Ok(Token::Operator(Op::Exp)),
-                "%"  => Ok(Token::Operator(Op::Mod)),
-                "="  => Ok(Token::Operator(Op::Equ)),
-                "."  => Ok(Token::Operator(Op::LazyEqu)),
-                "~"  => Ok(Token::Operator(Op::Compose)),
-                ","  => Ok(Token::Operator(Op::Id)),
-                "?"  => Ok(Token::Operator(Op::If)),
-                "??" => Ok(Token::Operator(Op::IfElse)),
-                ">"  => Ok(Token::Operator(Op::GreaterThan)),
-                "<"  => Ok(Token::Operator(Op::LessThan)),
-                ">=" => Ok(Token::Operator(Op::GreaterThanOrEqualTo)),
-                "<=" => Ok(Token::Operator(Op::LessThanOrEqualTo)),
-                "==" => Ok(Token::Operator(Op::EqualTo)),
-    
-                // then some keywords
-                "true"  => Ok(Token::Constant(Value::Bool(true))),
-                "false" => Ok(Token::Constant(Value::Bool(false))),
-                "not"   => Ok(Token::Operator(Op::Not)),
-    
-                // Type casting
-                "int"    => Ok(Token::Operator(Op::IntCast)),
-                "float"  => Ok(Token::Operator(Op::FloatCast)),
-                "bool"   => Ok(Token::Operator(Op::BoolCast)),
-                "string" => Ok(Token::Operator(Op::StringCast)),
-    
-                // then variable length keywords
-                _ => {
-                    if s.starts_with(":") {
-                        Ok(Token::Operator(Op::FunctionDeclare(
-                            get_dot_count(s).map(|x| x - 1).ok_or(TokenizeError::InvalidDynamicOperator(s.to_string()))?
-                        )))
+        match s {
+            // Match keywords first
+            "true"  => Ok(Token::Constant(Value::Bool(true))),
+            "false" => Ok(Token::Constant(Value::Bool(false))),
+            "int"    => Ok(Token::Operator(Op::IntCast)),
+            "float"  => Ok(Token::Operator(Op::FloatCast)),
+            "bool"   => Ok(Token::Operator(Op::BoolCast)),
+            "string" => Ok(Token::Operator(Op::StringCast)),
+            "print" => Ok(Token::Operator(Op::Print)),
+            "empty" => Ok(Token::Operator(Op::Empty)),
+            "head" => Ok(Token::Operator(Op::Head)),
+            "tail" => Ok(Token::Operator(Op::Tail)),
+            "init" => Ok(Token::Operator(Op::Init)),
+            "fini" => Ok(Token::Operator(Op::Fini)),
+            "export" => Ok(Token::Operator(Op::Export)),
+
+            // Types
+            "Any" => Ok(Token::Type(Type::Any)),
+            "Int" => Ok(Token::Type(Type::Int)),
+            "Float" => Ok(Token::Type(Type::Float)),
+            "Bool" => Ok(Token::Type(Type::Bool)),
+            "String" => Ok(Token::Type(Type::String)),
+
+            // then identifiers and numbers
+            _ => {
+                if identifier.is_match(s) {
+                    Ok(Token::Identifier(s.to_string()))
+                } else if number.is_match(s) {
+                    if let Ok(int) = s.parse::<i64>() {
+                        Ok(Token::Constant(Value::Int(int)))
+                    } else if let Ok(float) = s.parse::<f64>() {
+                        Ok(Token::Constant(Value::Float(float)))
                     } else {
-                        Err(TokenizeError::UnableToMatchToken(s.to_string()))
+                        Err(TokenizeError::InvalidNumericConstant(s.to_string()))
                     }
+                } else {
+                    Err(TokenizeError::UnableToMatchToken(s.to_string()))
                 }
             }
         }
@@ -165,7 +174,39 @@ impl<R: BufRead> Tokenizer<R> {
 
     /// Tokenizes more input and adds them to the internal queue
     fn tokenize<I: Iterator<Item = char>>(&mut self, mut iter: Peekable<I>) {
-        const OPERATOR_CHARS: &'static str = "!@$%^&*()-=+[]{}|;:,<.>/?";
+        let operators: HashMap<&'static str, Op> = HashMap::from([
+            ("+", Op::Add),
+            ("-", Op::Sub),
+            ("*", Op::Mul),
+            ("/", Op::Div),
+            ("**", Op::Exp),
+            ("%", Op::Mod),
+            ("=", Op::Equ),
+            (".", Op::LazyEqu),
+            ("?.", Op::TypeDeclaration),
+            (":", Op::FunctionDefine(1)),
+            ("?:", Op::FunctionDeclare(1)),
+            (";", Op::LambdaDefine(1)),
+            ("->", Op::Arrow),
+            ("~", Op::Compose),
+            (",", Op::Id),
+            ("?", Op::If),
+            ("??", Op::IfElse),
+            (">", Op::GreaterThan),
+            ("<", Op::LessThan),
+            (">=", Op::GreaterThanOrEqualTo),
+            ("<=", Op::LessThanOrEqualTo),
+            ("==", Op::EqualTo),
+            ("!=", Op::NotEqualTo),
+            ("[", Op::OpenArray),
+            ("]", Op::CloseArray),
+            ("(", Op::OpenStatement),
+            (")", Op::CloseStatement),
+            ("!", Op::Not),
+            ("&&", Op::And),
+            ("||", Op::Or),
+            ("'", Op::NonCall),
+        ]);
 
         let c = if let Some(c) = iter.next() {
             c
@@ -173,7 +214,7 @@ impl<R: BufRead> Tokenizer<R> {
             return;
         };
 
-        if c.is_alphanumeric() || c == '.' {
+        if c.is_alphanumeric() {
             let mut token = String::from(c);
 
             while let Some(c) = iter.next_if(|&c| c.is_alphanumeric() || c == '.' || c == '\'') {
@@ -182,17 +223,7 @@ impl<R: BufRead> Tokenizer<R> {
 
             self.tokens.push_back(Token::parse(&token));
             self.tokenize(iter)
-        } else if OPERATOR_CHARS.contains(c) {
-            let mut token = String::from(c);
-
-            while let Some(c) = iter.next_if(|&c| OPERATOR_CHARS.contains(c)) {
-                token.push(c);
-            }
-
-            self.tokens.push_back(Token::parse(&token));
-            self.tokenize(iter)
         } else if c == '#' {
-            // consume comments
             let _: String = iter.by_ref().take_while(|&c| c != '\n').collect();
         } else if c == '\"' {
             let mut token = String::new();
@@ -222,10 +253,135 @@ impl<R: BufRead> Tokenizer<R> {
 
             self.tokens.push_back(Ok(Token::Constant(Value::String(token))));
             self.tokenize(iter)
+        } else if operators.keys().any(|x| x.starts_with(c)) {
+            let mut token = String::from(c);
+
+            loop {
+                // get a list of all tokens this current token could possibly be
+                let possible: HashMap<&'static str, Op> = operators
+                    .clone().into_iter()
+                    .filter(|(key, _)| key.starts_with(&token))
+                    .collect();
+
+                // checks if a character is "expected", aka based on how many chars
+                // we have eaten so far, which characters out of the current nominees
+                // are expected in the next position
+                let is_expected = |c: &char|
+                    possible.iter().any(|(op, _)| match op.chars().nth(token.len()) {
+                        Some(i) => *c == i,
+                        None => false,
+                    });
+
+                match possible.len() {
+                    1 => {
+                        // if the current operator exists in possible, we push it
+                        // if not, we need to make sure that the next characters
+                        // we grab *actually* match the last operator
+                        if let Some(op) = possible.get(token.as_str()) {
+                            self.tokens.push_back(Ok(Token::Operator(match op {
+                                // special handling for "dynamic" operators
+                                Op::FunctionDefine(n) => {
+                                    let count = match get_dot_count(&mut iter) {
+                                        Some(count) => count,
+                                        None => {
+                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                            return;
+                                        }
+                                    };
+                                    Op::FunctionDefine(n + count)
+                                }
+                                Op::FunctionDeclare(n) => {
+                                    let count = match get_dot_count(&mut iter) {
+                                        Some(count) => count,
+                                        None => {
+                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                            return;
+                                        }
+                                    };
+                                    Op::FunctionDeclare(n + count)
+                                }
+                                Op::LambdaDefine(n) => {
+                                    let count = match get_dot_count(&mut iter) {
+                                        Some(count) => count,
+                                        None => {
+                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                            return;
+                                        }
+                                    };
+                                    Op::LambdaDefine(n + count)
+                                }
+                                op => op.clone(),
+                            })));
+
+                            break;
+                        } else {
+                            let next = match iter.next_if(is_expected) {
+                                Some(c) => c,
+                                None => {
+                                    self.tokens.push_back(Err(TokenizeError::UnableToMatchToken(format!("{token}"))));
+                                    return;
+                                }
+                            };
+    
+                            token.push(next);
+                        }
+                    }
+                    0 => unreachable!(),
+                    _ => {
+                        let next = match iter.next_if(is_expected) {
+                            Some(c) => c,
+                            None => {
+                                // at this point, token must be in the hashmap possible, otherwise it wouldnt have any matches
+                                self.tokens.push_back(Ok(Token::Operator(match possible.get(token.as_str()).unwrap() {
+                                    // special handling for "dynamic" operators
+                                    Op::FunctionDefine(n) => {
+                                        let count = match get_dot_count(&mut iter) {
+                                            Some(count) => count,
+                                            None => {
+                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                                return;
+                                            }
+                                        };
+    
+                                        Op::FunctionDefine(n + count)
+                                    }
+                                    Op::FunctionDeclare(n) => {
+                                        let count = match get_dot_count(&mut iter) {
+                                            Some(count) => count,
+                                            None => {
+                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                                return;
+                                            }
+                                        };
+                                        Op::FunctionDeclare(n + count)
+                                    }
+                                    Op::LambdaDefine(n) => {
+                                        let count = match get_dot_count(&mut iter) {
+                                            Some(count) => count,
+                                            None => {
+                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
+                                                return;
+                                            }
+                                        };
+                                        Op::LambdaDefine(n + count)
+                                    }
+                                    op => op.clone(),
+                                })));
+                                break;
+                            }
+                        };
+
+                        token.push(next);
+                    }
+                }
+            }
+
+            self.tokenize(iter)
         } else if c.is_whitespace() {
             self.tokenize(iter)
         } else {
             self.tokens.push_back(Err(TokenizeError::InvalidCharacter(c)));
+            return;
         }
     }
 }
@@ -262,16 +418,29 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::str::FromStr;
+    use crate::parser::Parser;
+    use super::*;
 
     #[test]
     fn tokenizer() {
-        let program = ": function x ** x 2 function 1200";
+        let program = ": length ?. x [] -> Int ?? x + 1 length tail x 0 length [ 1 2 3 ]";
 
-        let tok = Tokenizer::from_str(program).unwrap();
-        let tokens: Vec<Token> = tok.collect::<Result<_, TokenizeError>>().expect("tokenizer error");
+        let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, _>>().unwrap();
 
-        println!("{tokens:?}");
+        println!("{tokens:#?}");
+    }
+
+    #[test]
+    fn a() {
+        let program = ": length ?. x [] -> Int ?? x + 1 length tail x 0 length [ 1 2 3 ]";
+
+        let mut tokenizer = Tokenizer::from_str(program).unwrap().peekable();
+
+        let mut globals = HashMap::new();
+        let mut parser = Parser::new(&mut tokenizer, &mut globals);
+
+        let tree = parser.next();
+        println!("{tree:#?}");
     }
 }
