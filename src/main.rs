@@ -5,8 +5,8 @@ fn main() {
 
 	for value in runtime.values() {
 		match value {
-			Ok(v) => println!("{v}"),
-			Err(e) => eprintln!("{e}"),
+			Ok(v) => println!("=> {v}"),
+			Err(e) => eprintln!("error: {e}"),
 		}
 	}
 }
