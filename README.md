@@ -37,6 +37,7 @@ Variables are **scoped** in Lamm, meaning they only exist in the single expressi
 = pi 3.1415926
 = r 16
 * pi ** r 2       # OK
+
 = deg 60
 * deg / pi 360.0  # ERROR: `pi` was undefined
 ```
@@ -103,14 +104,14 @@ The `?.` operator is unique to function declarations and is used to specify the 
 ```
 # Applies a function to any value
 :. apply : f x f x
-	apply 'sqrt 9  # => 3
+	apply \sqrt 9  # => 3
 
 # Applies a function f which maps an Int to an Int to x
 :. apply'int ?: f Int -> Int ?. x Int -> Int f x
-	apply'int 'sqrt 36  # => 6
+	apply'int \sqrt 36  # => 6
 ```
 
-The `:` operator inside of a function prototype tells Lamm that this argument must be a function where every argument and it's return type are all `Any`. This means that `: f` is essentially syntactic sugar for `?: f Any -> Any`. Also, in order to pass a function to a function, you must use the `'` operator, which tells Lamm not to call the function.
+The `:` operator inside of a function prototype tells Lamm that this argument must be a function where every argument and it's return type are all `Any`. This means that `: f` is essentially syntactic sugar for `?: f Any -> Any`. Also, in order to pass a function to a function, you must use the `\` operator, which tells Lamm not to call the function.
 
 And off course, `:` and `?:` in function prototypes can also be extended depending on the number of arguments the function must take.
 
@@ -171,15 +172,15 @@ Using these, you can build a lot of fundamental functional paradigm functions.
 ```
 :. map : f ?. x [] -> []
 	?? bool x
-		+ f head x map 'f tail x
+		+ f head x map \f tail x
 		empty
 map ;x ** x 2 [1 2 3 4 5 6 7 8 9 10]  # => [1 4 9 16 25 36 49 64 81 100]
 
 :: iterate : f i count -> []
 	?? > count 0 
-		+ i iterate 'f f i - count 1
+		+ i iterate \f f i - count 1
 		empty
-iterate ;x + 1 x 0 10  # => [0 1 2 3 4 5 6 7 8 9]
+iterate (+ 1) 0 10  # => [0 1 2 3 4 5 6 7 8 9]
 
 :. take ?. n Int ?. x [] -> []
 	?? > n 0
@@ -189,9 +190,9 @@ take 3 [1 2 3 4 5]  # => [1 2 3]
 
 :. take'while ?: pred Any -> Bool ?. x [] -> []
 	?? && bool x pred head x
-		+ head x take'while 'pred tail x
+		+ head x take'while \pred tail x
 		empty
-take'while ;x < x 10 [1 3 5 7 9 11 13 15 16]  # => [1 3 5 7 9]
+take'while (> 10) [1 3 5 7 9 11 13 15 16]  # => [1 3 5 7 9]
 ```
 
 ## Lambdas
