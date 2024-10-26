@@ -15,8 +15,3 @@
 - type variables in function parameters and data types
 - automatic Int to Float casting if a parameter expects a float
 - `[x..y]` array generators
-- `(+)` = `;.x y + x y`
-
-## Maybe Add
-
-- `/` for float division and `//` for integer division
