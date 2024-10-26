@@ -9,6 +9,7 @@
 - tuples
 - `extern "C"` functions
 - modules (`import` function)
+- a standard library
 - structs
 - data types (need an IO object for stateful functions to return)
 - unpacking type parameters (`(x:xs)` in Haskell for example)
