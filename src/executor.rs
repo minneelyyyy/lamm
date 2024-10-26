@@ -185,13 +185,22 @@ where
                         _ => Err(RuntimeError::NoOverloadForTypes("*".into(), args)),
                     }
                     Op::Div => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x / y)),
+                        [Value::Int(x), Value::Int(y)] => Ok(Value::Float(*x as f64 / *y as f64)),
                         [Value::Float(x), Value::Int(y)] => Ok(Value::Float(x / *y as f64)),
                         [Value::Int(x), Value::Float(y)] => Ok(Value::Float(*x as f64 / y)),
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x / y)),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
                         _ => Err(RuntimeError::NoOverloadForTypes("/".into(), args)),
+                    }
+                    Op::FloorDiv => match &args[..] {
+                        [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x / y)),
+                        [Value::Float(x), Value::Int(y)] => Ok(Value::Int(*x as i64 / y)),
+                        [Value::Int(x), Value::Float(y)] => Ok(Value::Int(x / *y as i64)),
+                        [Value::Float(x), Value::Float(y)] => Ok(Value::Int(*x as i64 / *y as i64)),
+                        [Value::Nil, x] => Ok(x.clone()),
+                        [x, Value::Nil] => Ok(x.clone()),
+                        _ => Err(RuntimeError::NoOverloadForTypes("//".into(), args)),
                     }
                     Op::Exp => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Float((*x as f64).powf(*y as f64))),
