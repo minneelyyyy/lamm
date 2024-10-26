@@ -2,7 +2,7 @@
 use crate::executor::Executor;
 
 use super::{Value, Type, Function, FunctionType};
-use super::tokenizer::{Token, TokenizeError, Op};
+use super::tokenizer::{Token, TokenType, TokenizeError, Op};
 
 use std::borrow::BorrowMut;
 use std::error;
@@ -14,7 +14,7 @@ use std::iter::Peekable;
 pub enum ParseError {
     NoInput,
     UnexpectedEndInput,
-    IdentifierUndefined(String),
+    IdentifierUndefined(Token),
     InvalidIdentifier(Token),
     UnmatchedArrayClose,
     UnwantedToken(Token),
@@ -27,7 +27,7 @@ impl Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParseError::UnexpectedEndInput => write!(f, "Input ended unexpectedly"),
-            ParseError::IdentifierUndefined(name) => write!(f, "Undefined identifier `{name}`"),
+            ParseError::IdentifierUndefined(name) => write!(f, "Undefined identifier `{}` {}:{}:{}", name.lexeme, name.file, name.line, name.location.start),
             ParseError::InvalidIdentifier(t) => write!(f, "Invalid identifier `{t:?}`"),
             ParseError::NoInput => write!(f, "No input given"),
             ParseError::UnmatchedArrayClose => write!(f, "there was an unmatched array closing operator `]`"),
@@ -114,12 +114,11 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
         self
     }
 
-    fn get_object_type(&self, ident: &String) -> Result<&Type, ParseError> {
+    fn get_object_type(&self, ident: &String) -> Option<&Type> {
         self.locals.get(ident).or(self.globals.get(ident))
-            .ok_or(ParseError::IdentifierUndefined(ident.clone()))
     }
 
-    fn _get_object_types<Names: Iterator<Item = String>>(&self, items: Names) -> impl Iterator<Item = Result<&Type, ParseError>> {
+    fn _get_object_types<Names: Iterator<Item = String>>(&self, items: Names) -> impl Iterator<Item = Option<&Type>> {
         items.map(|x| self.get_object_type(&x))
     }
 
@@ -194,10 +193,10 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
             .ok_or(ParseError::NoInput)?
             .map_err(|e| ParseError::TokenizeError(e))?;
 
-        match token {
-            Token::Constant(c) => Ok(ParseTree::Value(c)),
-            Token::Identifier(ident) => {
-                match self.get_object_type(&ident)? {
+        match token.token() {
+            TokenType::Constant(c) => Ok(ParseTree::Value(c)),
+            TokenType::Identifier(ident) => {
+                match self.get_object_type(&ident).ok_or(ParseError::IdentifierUndefined(token))? {
                     Type::Function(f) => {
                         let f = f.clone();
                         let args = self.get_args(f.1.len())?;
@@ -228,20 +227,23 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                     _ => Ok(ParseTree::Variable(ident)),
                 }
             },
-            Token::Operator(op) => match op {
+            TokenType::Operator(op) => match op {
                 Op::OpenArray => {
                     let mut depth = 1;
 
                     // take tokens until we reach the end of this array
                     // if we don't collect them here it causes rust to overflow computing the types
                     let array_tokens = self.tokens.by_ref().take_while(|t| match t {
-                        Ok(Token::Operator(Op::OpenArray)) => {
-                            depth += 1;
-                            true
-                        },
-                        Ok(Token::Operator(Op::CloseArray)) => {
-                            depth -= 1;
-                            depth > 0
+                        Ok(t) => match t.token() {
+                            TokenType::Operator(Op::OpenArray) => {
+                                depth += 1;
+                                true
+                            },
+                            TokenType::Operator(Op::CloseArray) => {
+                                depth -= 1;
+                                depth > 0
+                            }
+                            _ => true,
                         }
                         _ => true,
                     }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
@@ -270,13 +272,16 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                     // take tokens until we reach the end of this array
                     // if we don't collect them here it causes rust to overflow computing the types
                     let array_tokens = self.tokens.by_ref().take_while(|t| match t {
-                        Ok(Token::Operator(Op::OpenStatement)) => {
-                            depth += 1;
-                            true
-                        },
-                        Ok(Token::Operator(Op::CloseStatement)) => {
-                            depth -= 1;
-                            depth > 0
+                        Ok(t) => match t.token() {
+                            TokenType::Operator(Op::OpenStatement) => {
+                                depth += 1;
+                                true
+                            },
+                            TokenType::Operator(Op::CloseStatement) => {
+                                depth -= 1;
+                                depth > 0
+                            }
+                            _ => true,
                         }
                         _ => true,
                     }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
@@ -304,7 +309,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
 
                     let body = Box::new(self.parse()?);
 
-                    if let Token::Identifier(ident) = token {
+                    if let TokenType::Identifier(ident) = token.token() {
                         match op {
                             Op::Equ => Ok(ParseTree::Equ(
                                 ident.clone(),
@@ -359,10 +364,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                         });
 
                         for name in names.clone() {
-                            let t = match self.locals.remove(&name).ok_or(ParseError::IdentifierUndefined(name.clone())) {
-                                Ok(t) => t,
-                                Err(e) => return Err(e),
-                            };
+                            let t = self.locals.remove(&name).ok_or(ParseError::IdentifierUndefined(token.clone()))?;
                             self.globals.insert(name, t);
                         }
 
@@ -392,7 +394,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                 },
                 op => self.parse_operator(op),
             },
-            t => Err(ParseError::UnwantedToken(t)),
+            _ => Err(ParseError::UnwantedToken(token)),
         }
     }
 
@@ -436,7 +438,8 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
             .collect::<Result<_, _>>()?;
 
         let (types, names): (Vec<_>, Vec<_>) = args.into_iter().unzip();
-        let ret = if tokens.next_if(|x| matches!(x, Ok(Token::Operator(Op::Arrow)))).is_some() {
+
+        let ret = if tokens.next_if(|x| matches!(x.as_ref().unwrap().token(), TokenType::Operator(Op::Arrow))).is_some() {
             Self::parse_type(tokens)?
         } else {
             Type::Any
@@ -445,15 +448,16 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
         Ok((FunctionType(Box::new(ret), types), names))
     }
 
-    fn parse_function_declaration_parameter(
-        mut tokens: &mut Peekable<I>) -> Result<(Type, String), ParseError>
+    fn parse_function_declaration_parameter(mut tokens: &mut Peekable<I>) -> Result<(Type, String), ParseError>
     {
-        match tokens.next() {
+        let token = tokens.next().ok_or(ParseError::UnexpectedEndInput)?.map_err(|e| ParseError::TokenizeError(e))?;
+
+        match token.token() {
             // untyped variable
-            Some(Ok(Token::Identifier(x))) => Ok((Type::Any, x)),
+            TokenType::Identifier(x) => Ok((Type::Any, x)),
 
             // typed variable
-            Some(Ok(Token::Operator(Op::TypeDeclaration))) => {
+            TokenType::Operator(Op::TypeDeclaration) => {
                 let name = Self::get_identifier(tokens.next())?;
                 let t = Self::parse_type(&mut tokens)?;
 
@@ -461,7 +465,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
             }
 
             // untyped function (all args Any, return type Any)
-            Some(Ok(Token::Operator(Op::FunctionDefine(n)))) => {
+            TokenType::Operator(Op::FunctionDefine(n)) => {
                 let name = Self::get_identifier(tokens.next())?;
                 let args = (0..n).map(|_| Type::Any).collect();
 
@@ -469,7 +473,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
             }
 
             // typed function
-            Some(Ok(Token::Operator(Op::FunctionDeclare(n)))) => {
+            TokenType::Operator(Op::FunctionDeclare(n)) => {
                 let name = Self::get_identifier(tokens.next())?;
                 let args = (0..n).map(|_| Self::parse_type(&mut tokens)).collect::<Result<_, _>>()?;
                 let mut ret = Type::Any;
@@ -477,7 +481,7 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
                 // this is annoying
                 // inside the next_if closure, we already can know that its an error
                 // and return it, but we cannot return out of a closure
-                if let Some(t) = tokens.next_if(|x| matches!(x, Ok(Token::Operator(Op::Arrow))))
+                if let Some(t) = tokens.next_if(|x| matches!(x.as_ref().unwrap().token(), TokenType::Operator(Op::Arrow)))
                 {
                     // so we just check for an error here. this is the only reason t exists.
                     if let Err(e) = t {
@@ -489,31 +493,33 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
 
                 Ok((Type::Function(FunctionType(Box::new(ret), args)), name))
             }
-
-            Some(Ok(t)) => Err(ParseError::UnwantedToken(t)),
-            Some(Err(e)) => Err(ParseError::TokenizeError(e)),
-            None => Err(ParseError::UnexpectedEndInput),
+            _ => Err(ParseError::UnwantedToken(token)),
         }
     }
 
     // for some dumbass reason,
     // this is the only code that breaks if it doesn't take an impl Iterator instead of simply I ...
     fn parse_type(tokens: &mut Peekable<impl Iterator<Item = Result<Token, TokenizeError>>>) -> Result<Type, ParseError> {
-        match tokens.next() {
-            Some(Ok(Token::Type(t))) => Ok(t),
-            Some(Ok(Token::Operator(Op::OpenArray))) => {
+        let token = tokens.next().ok_or(ParseError::UnexpectedEndInput)?.map_err(|e| ParseError::TokenizeError(e))?;
+
+        match token.token() {
+            TokenType::Type(t) => Ok(t),
+            TokenType::Operator(Op::OpenArray) => {
                 let mut depth = 1;
 
                 // take tokens until we reach the end of this array
                 // if we don't collect them here it causes rust to overflow computing the types
                 let array_tokens = tokens.by_ref().take_while(|t| match t {
-                    Ok(Token::Operator(Op::OpenArray)) => {
-                        depth += 1;
-                        true
-                    },
-                    Ok(Token::Operator(Op::CloseArray)) => {
-                        depth -= 1;
-                        depth > 0
+                    Ok(t) => match t.token() {
+                        TokenType::Operator(Op::OpenStatement) => {
+                            depth += 1;
+                            true
+                        },
+                        TokenType::Operator(Op::CloseStatement) => {
+                            depth -= 1;
+                            depth > 0
+                        }
+                        _ => true,
                     }
                     _ => true,
                 }).collect::<Result<Vec<_>, TokenizeError>>().map_err(|e| ParseError::TokenizeError(e))?;
@@ -537,19 +543,17 @@ impl<'a, I: Iterator<Item = Result<Token, TokenizeError>>> Parser<'a, I> {
 
                 Ok(Type::Array(Box::new(t)))
             },
-            Some(Ok(t)) => Err(ParseError::UnwantedToken(t.clone())),
-            Some(Err(e)) => Err(ParseError::TokenizeError(e)),
-            None => Err(ParseError::UnexpectedEndInput),
+            _ => Err(ParseError::UnwantedToken(token)),
         }
     }
 
     fn get_identifier(t: Option<Result<Token, TokenizeError>>) -> Result<String, ParseError> {
-        match t.ok_or(ParseError::UnexpectedEndInput)?
-            .map_err(|e| ParseError::TokenizeError(e))
-        {
-            Ok(Token::Identifier(ident)) => Ok(ident),
-            Ok(t) => Err(ParseError::InvalidIdentifier(t)),
-            Err(e) => Err(e),
+        let token = t.ok_or(ParseError::UnexpectedEndInput)?
+            .map_err(|e| ParseError::TokenizeError(e))?;
+
+        match token.token() {
+            TokenType::Identifier(ident) => Ok(ident),
+            _ => Err(ParseError::InvalidIdentifier(token)),
         }
     }
 }

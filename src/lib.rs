@@ -95,7 +95,7 @@ impl Value {
 }
 
 impl Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Float(x) => write!(f, "{x}"),
             Self::Int(x) => write!(f, "{x}"),
@@ -182,9 +182,9 @@ pub struct Runtime<'a, R: BufRead> {
 }
 
 impl<'a, R: BufRead> Runtime<'a, R> {
-    pub fn new(reader: R) -> Self {
+    pub fn new(reader: R, name: &str) -> Self {
         Self {
-            tokenizer: Tokenizer::new(reader).peekable(),
+            tokenizer: Tokenizer::new(reader, name).peekable(),
             global_types: HashMap::new(),
             globals: HashMap::new(),
             parser: None,

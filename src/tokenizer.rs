@@ -6,7 +6,9 @@ use crate::Type;
 
 use super::Value;
 use std::fmt::{Display, Formatter};
-use std::io::{BufRead, Cursor};
+use std::io::BufRead;
+use std::sync::Arc;
+use std::ops::Range;
 
 #[derive(Debug)]
 pub enum TokenizeError {
@@ -89,93 +91,164 @@ pub enum Op {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
+pub enum TokenType {
     Identifier(String),
     Operator(Op),
     Constant(Value),
     Type(Type),
 }
 
-fn get_dot_count<I: Iterator<Item = char>>(s: &mut Peekable<I>) -> Option<usize> {
-    let mut total = 0;
-
-    while let Some(n) = s.next_if(|&c| c == ':' || c == '.').map(|c| match c {
-        ':' => 2,
-        '.' => 1,
-        _ => 0,
-    }) {
-        total += n;
-    }
-
-    Some(total)
-}
-
-impl Token {
+impl TokenType {
     /// Parse a single token
     fn parse(s: &str) -> Result<Self, TokenizeError> {
         let identifier = regex::Regex::new(r#"[A-Za-z_][A-Za-z0-9_']*"#).map_err(|e| TokenizeError::Regex(e))?;
         let number = regex::Regex::new(r#"([0-9]+\.?[0-9]*)|(\.[0-9])"#).map_err(|e| TokenizeError::Regex(e))?;
 
-        match s {
+        Ok(match s {
             // Match keywords first
-            "true"  => Ok(Token::Constant(Value::Bool(true))),
-            "false" => Ok(Token::Constant(Value::Bool(false))),
-            "nil" => Ok(Token::Constant(Value::Nil)),
-            "int"    => Ok(Token::Operator(Op::IntCast)),
-            "float"  => Ok(Token::Operator(Op::FloatCast)),
-            "bool"   => Ok(Token::Operator(Op::BoolCast)),
-            "string" => Ok(Token::Operator(Op::StringCast)),
-            "print" => Ok(Token::Operator(Op::Print)),
-            "empty" => Ok(Token::Operator(Op::Empty)),
-            "head" => Ok(Token::Operator(Op::Head)),
-            "tail" => Ok(Token::Operator(Op::Tail)),
-            "init" => Ok(Token::Operator(Op::Init)),
-            "fini" => Ok(Token::Operator(Op::Fini)),
-            "export" => Ok(Token::Operator(Op::Export)),
+            "true"  => TokenType::Constant(Value::Bool(true)),
+            "false" => TokenType::Constant(Value::Bool(false)),
+            "nil" => TokenType::Constant(Value::Nil),
+            "int"    => TokenType::Operator(Op::IntCast),
+            "float"  => TokenType::Operator(Op::FloatCast),
+            "bool"   => TokenType::Operator(Op::BoolCast),
+            "string" => TokenType::Operator(Op::StringCast),
+            "print" => TokenType::Operator(Op::Print),
+            "empty" => TokenType::Operator(Op::Empty),
+            "head" => TokenType::Operator(Op::Head),
+            "tail" => TokenType::Operator(Op::Tail),
+            "init" => TokenType::Operator(Op::Init),
+            "fini" => TokenType::Operator(Op::Fini),
+            "export" => TokenType::Operator(Op::Export),
 
             // Types
-            "Any" => Ok(Token::Type(Type::Any)),
-            "Int" => Ok(Token::Type(Type::Int)),
-            "Float" => Ok(Token::Type(Type::Float)),
-            "Bool" => Ok(Token::Type(Type::Bool)),
-            "String" => Ok(Token::Type(Type::String)),
+            "Any" => TokenType::Type(Type::Any),
+            "Int" => TokenType::Type(Type::Int),
+            "Float" => TokenType::Type(Type::Float),
+            "Bool" => TokenType::Type(Type::Bool),
+            "String" => TokenType::Type(Type::String),
 
             // then identifiers and numbers
             _ => {
                 if identifier.is_match(s) {
-                    Ok(Token::Identifier(s.to_string()))
+                    TokenType::Identifier(s.to_string())
                 } else if number.is_match(s) {
                     if let Ok(int) = s.parse::<i64>() {
-                        Ok(Token::Constant(Value::Int(int)))
+                        TokenType::Constant(Value::Int(int))
                     } else if let Ok(float) = s.parse::<f64>() {
-                        Ok(Token::Constant(Value::Float(float)))
+                        TokenType::Constant(Value::Float(float))
                     } else {
-                        Err(TokenizeError::InvalidNumericConstant(s.to_string()))
+                        return Err(TokenizeError::InvalidNumericConstant(s.to_string()));
                     }
                 } else {
-                    Err(TokenizeError::UnableToMatchToken(s.to_string()))
+                    return Err(TokenizeError::UnableToMatchToken(s.to_string()));
                 }
             }
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Token {
+    t: TokenType,
+    pub lexeme: String,
+    pub line: usize,
+    pub file: Arc<String>,
+    pub location: Range<usize>,
+}
+
+impl Token {
+    pub fn new(t: TokenType, lexeme: String, file: Arc<String>, line: usize, column: usize) -> Self {
+        Self {
+            t,
+            line,
+            file,
+            location: column..column+lexeme.len(),
+            lexeme,
         }
+    }
+
+    pub fn token(&self) -> TokenType {
+        self.t.clone()
     }
 }
 
 /// Tokenize an input stream of source code for a Parser
 pub(crate) struct Tokenizer<R: BufRead> {
     reader: R,
-    tokens: VecDeque<Result<Token, TokenizeError>>,
+    line: usize,
+    column: usize,
+    code: String,
+    filename: Arc<String>,
+    tokens: VecDeque<Token>,
 }
 
 impl<R: BufRead> Tokenizer<R> {
-    pub fn new(reader: R) -> Self {
+    pub fn new(reader: R, filename: &str) -> Self {
         Self {
             reader,
+            line: 0,
+            column: 0,
+            filename: Arc::new(filename.to_string()),
+            code: String::new(),
             tokens: VecDeque::new(),
         }
     }
 
+    fn get_dot_count<I: Iterator<Item = char>>(&mut self, s: &mut Peekable<I>) -> Option<usize> {
+        let mut total = 0;
+
+        while let Some(n) = self.next_char_if(s, |&c| c == ':' || c == '.').map(|c| match c {
+            ':' => 2,
+            '.' => 1,
+            _ => 0,
+        }) {
+            total += n;
+        }
+
+        Some(total)
+    }
+
+    fn next_char<I: Iterator<Item = char>>(&mut self, iter: &mut Peekable<I>) -> Option<char> {
+        if let Some(c) = iter.next() {
+            self.column += 1;
+            Some(c)
+        } else {
+            None
+        }
+    }
+
+    fn next_char_if<I: Iterator<Item = char>>(
+        &mut self,
+        iter: &mut Peekable<I>,
+        pred: impl FnOnce(&char) -> bool) -> Option<char>
+    {
+        if let Some(c) = iter.next_if(pred) {
+            self.column += 1;
+            Some(c)
+        } else {
+            None
+        }
+    }
+
+    fn next_char_while<I: Iterator<Item = char>>(
+        &mut self,
+        iter: &mut Peekable<I>,
+        mut pred: impl FnMut(&char) -> bool) -> Option<char>
+    {
+        if let Some(c) = self.next_char(iter) {
+            if (pred)(&c) {
+                Some(c)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     /// Tokenizes more input and adds them to the internal queue
-    fn tokenize<I: Iterator<Item = char>>(&mut self, mut iter: Peekable<I>) {
+    fn tokenize<I: Iterator<Item = char>>(&mut self, mut iter: Peekable<I>) -> Result<(), TokenizeError> {
         let operators: HashMap<&'static str, Op> = HashMap::from([
             ("+", Op::Add),
             ("-", Op::Sub),
@@ -211,33 +284,31 @@ impl<R: BufRead> Tokenizer<R> {
             ("\\", Op::NonCall),
         ]);
 
-        let c = if let Some(c) = iter.next() {
+        let c = if let Some(c) = self.next_char(&mut iter) {
             c
         } else {
-            return;
+            return Ok(());
         };
 
         if c.is_alphanumeric() {
             let mut token = String::from(c);
 
-            while let Some(c) = iter.next_if(|&c| c.is_alphanumeric() || c == '.' || c == '\'') {
+            while let Some(c) = self.next_char_if(&mut iter, |&c| c.is_alphanumeric() || c == '.' || c == '\'') {
                 token.push(c);
             }
 
-            self.tokens.push_back(Token::parse(&token));
+            self.tokens.push_back(Token::new(TokenType::parse(&token)?, token, self.filename.clone(), self.line, self.column));
             self.tokenize(iter)
         } else if c == '#' {
             let _: String = iter.by_ref().take_while(|&c| c != '\n').collect();
+            self.tokenize(iter)
         } else if c == '\"' {
             let mut token = String::new();
 
-            while let Some(c) = iter.next() {
+            while let Some(c) = self.next_char(&mut iter) {
                 match c {
                     '"' => break,
-                    '\n' => {
-                        self.tokens.push_back(Err(TokenizeError::UnclosedString));
-                        return;
-                    }
+                    '\n' => return Err(TokenizeError::UnclosedString),
                     '\\' => match iter.next() {
                         Some('\\') => token.push('\\'),
                         Some('n') => token.push('\n'),
@@ -245,16 +316,16 @@ impl<R: BufRead> Tokenizer<R> {
                         Some('r') => token.push('\r'),
                         Some('\"') => token.push('"'),
                         Some(c) => token.push(c),
-                        None => {
-                            self.tokens.push_back(Err(TokenizeError::UnclosedString));
-                            return;
-                        },
+                        None => return Err(TokenizeError::UnclosedString),
                     }
                     _ => token.push(c),
                 }
             }
 
-            self.tokens.push_back(Ok(Token::Constant(Value::String(token))));
+            self.tokens.push_back(
+                Token::new(TokenType::Constant(
+                    Value::String(token.clone())), token, self.filename.clone(), self.line, self.column));
+
             self.tokenize(iter)
         } else if operators.keys().any(|x| x.starts_with(c)) {
             let mut token = String::from(c);
@@ -281,49 +352,39 @@ impl<R: BufRead> Tokenizer<R> {
                         // if not, we need to make sure that the next characters
                         // we grab *actually* match the last operator
                         if let Some(op) = possible.get(token.as_str()) {
-                            self.tokens.push_back(Ok(Token::Operator(match op {
+                            let token = Token::new(TokenType::Operator(match op {
                                 // special handling for "dynamic" operators
                                 Op::FunctionDefine(n) => {
-                                    let count = match get_dot_count(&mut iter) {
+                                    let count = match self.get_dot_count(&mut iter) {
                                         Some(count) => count,
-                                        None => {
-                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
-                                            return;
-                                        }
+                                        None => return Err(TokenizeError::InvalidDynamicOperator(token)),
                                     };
                                     Op::FunctionDefine(n + count)
                                 }
                                 Op::FunctionDeclare(n) => {
-                                    let count = match get_dot_count(&mut iter) {
+                                    let count = match self.get_dot_count(&mut iter) {
                                         Some(count) => count,
-                                        None => {
-                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
-                                            return;
-                                        }
+                                        None => return Err(TokenizeError::InvalidDynamicOperator(token)),
                                     };
                                     Op::FunctionDeclare(n + count)
                                 }
                                 Op::LambdaDefine(n) => {
-                                    let count = match get_dot_count(&mut iter) {
+                                    let count = match self.get_dot_count(&mut iter) {
                                         Some(count) => count,
-                                        None => {
-                                            self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
-                                            return;
-                                        }
+                                        None => return Err(TokenizeError::InvalidDynamicOperator(token)),
                                     };
                                     Op::LambdaDefine(n + count)
                                 }
                                 op => op.clone(),
-                            })));
+                            }), token, self.filename.clone(), self.line, self.column);
+                            
+                            self.tokens.push_back(token);
 
                             break;
                         } else {
-                            let next = match iter.next_if(is_expected) {
+                            let next = match self.next_char_if(&mut iter, is_expected) {
                                 Some(c) => c,
-                                None => {
-                                    self.tokens.push_back(Err(TokenizeError::UnableToMatchToken(format!("{token}"))));
-                                    return;
-                                }
+                                None => return Err(TokenizeError::UnableToMatchToken(format!("{token}"))),
                             };
     
                             token.push(next);
@@ -331,45 +392,38 @@ impl<R: BufRead> Tokenizer<R> {
                     }
                     0 => unreachable!(),
                     _ => {
-                        let next = match iter.next_if(is_expected) {
+                        let next = match self.next_char_if(&mut iter, is_expected) {
                             Some(c) => c,
                             None => {
-                                // at this point, token must be in the hashmap possible, otherwise it wouldnt have any matches
-                                self.tokens.push_back(Ok(Token::Operator(match possible.get(token.as_str()).unwrap() {
+                                let token = Token::new(TokenType::Operator(match possible.get(token.as_str()).unwrap() {
                                     // special handling for "dynamic" operators
                                     Op::FunctionDefine(n) => {
-                                        let count = match get_dot_count(&mut iter) {
+                                        let count = match self.get_dot_count(&mut iter) {
                                             Some(count) => count,
-                                            None => {
-                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
-                                                return;
-                                            }
+                                            None => return Err(TokenizeError::InvalidDynamicOperator(token)),
                                         };
     
                                         Op::FunctionDefine(n + count)
                                     }
                                     Op::FunctionDeclare(n) => {
-                                        let count = match get_dot_count(&mut iter) {
+                                        let count = match self.get_dot_count(&mut iter) {
                                             Some(count) => count,
-                                            None => {
-                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
-                                                return;
-                                            }
+                                            None => return Err(TokenizeError::InvalidDynamicOperator(token)),
                                         };
                                         Op::FunctionDeclare(n + count)
                                     }
                                     Op::LambdaDefine(n) => {
-                                        let count = match get_dot_count(&mut iter) {
+                                        let count = match self.get_dot_count(&mut iter) {
                                             Some(count) => count,
-                                            None => {
-                                                self.tokens.push_back(Err(TokenizeError::InvalidDynamicOperator(token)));
-                                                return;
-                                            }
+                                            None => return Err(TokenizeError::InvalidDynamicOperator(token)),
                                         };
                                         Op::LambdaDefine(n + count)
                                     }
                                     op => op.clone(),
-                                })));
+                                }), token, self.filename.clone(), self.line, self.column);
+
+                                // at this point, token must be in the hashmap possible, otherwise it wouldn't have any matches
+                                self.tokens.push_back(token);
                                 break;
                             }
                         };
@@ -383,27 +437,17 @@ impl<R: BufRead> Tokenizer<R> {
         } else if c.is_whitespace() {
             self.tokenize(iter)
         } else {
-            self.tokens.push_back(Err(TokenizeError::InvalidCharacter(c)));
-            return;
+            return Err(TokenizeError::InvalidCharacter(c));
         }
     }
 }
 
-impl std::str::FromStr for Tokenizer<Cursor<String>> {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let cursor = Cursor::new(s.to_string());
-        Ok(Tokenizer::new(cursor))
-    }
-}
-
-impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
+impl<R: BufRead> Iterator for Tokenizer<R> {
     type Item = Result<Token, TokenizeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(token) = self.tokens.pop_front() {
-            return Some(token);
+            return Some(Ok(token));
         }
 
         let mut input = String::new();
@@ -411,7 +455,15 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
         match self.reader.read_line(&mut input) {
             Ok(0) => None,
             Ok(_n) => {
-                self.tokenize(input.chars().peekable());
+                self.code.push_str(&input);
+                self.line += 1;
+                self.column = 0;
+
+                match self.tokenize(input.chars().peekable()) {
+                    Ok(()) => (),
+                    Err(e) => return Some(Err(e)),
+                }
+
                 self.next()
             },
             Err(e) => Some(Err(TokenizeError::IO(e))),
@@ -421,7 +473,8 @@ impl<R: BufRead> std::iter::Iterator for Tokenizer<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use io::Cursor;
+
     use crate::parser::Parser;
     use super::*;
 
@@ -429,7 +482,7 @@ mod tests {
     fn tokenizer() {
         let program = ": length ?. x [] -> Int ?? x + 1 length tail x 0 length [ 1 2 3 ]";
 
-        let tokens: Vec<Token> = Tokenizer::from_str(program).unwrap().collect::<Result<_, _>>().unwrap();
+        let tokens: Vec<Token> = Tokenizer::new(Cursor::new(program), "<tokenizer>").collect::<Result<_, _>>().unwrap();
 
         println!("{tokens:#?}");
     }
@@ -438,7 +491,7 @@ mod tests {
     fn a() {
         let program = ": length ?. x [] -> Int ?? x + 1 length tail x 0 length [ 1 2 3 ]";
 
-        let mut tokenizer = Tokenizer::from_str(program).unwrap().peekable();
+        let mut tokenizer = Tokenizer::new(Cursor::new(program), "<a>").peekable();
 
         let mut globals = HashMap::new();
         let mut parser = Parser::new(&mut tokenizer, &mut globals);
