@@ -300,7 +300,7 @@ impl<R: BufRead> Tokenizer<R> {
             self.tokens.push_back(Token::new(TokenType::parse(&token)?, token, self.filename.clone(), self.line, self.column));
             self.tokenize(iter)
         } else if c == '#' {
-            let _: String = iter.by_ref().take_while(|&c| c != '\n').collect();
+            while self.next_char_while(&mut iter, |&c| c != '\n').is_some() {}
             self.tokenize(iter)
         } else if c == '\"' {
             let mut token = String::new();
