@@ -41,7 +41,7 @@ impl Display for TokenizeError {
 
 impl error::Error for TokenizeError {}
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Op {
     Add,
     Sub,
@@ -79,12 +79,12 @@ pub enum Op {
     Empty,
     And,
     Or,
-    NonCall,
     Head,
     Tail,
     Init,
     Fini,
     Export,
+    NonCall,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +119,7 @@ impl Token {
             // Match keywords first
             "true"  => Ok(Token::Constant(Value::Bool(true))),
             "false" => Ok(Token::Constant(Value::Bool(false))),
+            "nil" => Ok(Token::Constant(Value::Nil)),
             "int"    => Ok(Token::Operator(Op::IntCast)),
             "float"  => Ok(Token::Operator(Op::FloatCast)),
             "bool"   => Ok(Token::Operator(Op::BoolCast)),
@@ -205,7 +206,7 @@ impl<R: BufRead> Tokenizer<R> {
             ("!", Op::Not),
             ("&&", Op::And),
             ("||", Op::Or),
-            ("'", Op::NonCall),
+            ("\\", Op::NonCall),
         ]);
 
         let c = if let Some(c) = iter.next() {

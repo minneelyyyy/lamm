@@ -55,7 +55,7 @@ impl Display for Type {
 }
 
 /// Represents the result of executing a ParseTree with an Executor
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Value {
     Float(f64),
     Int(i64),
@@ -64,6 +64,20 @@ pub enum Value {
     Array(Type, Vec<Value>),
     Function(Function),
     Nil,
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Float(l0), Self::Float(r0)) => l0 == r0,
+            (Self::Int(l0), Self::Int(r0)) => l0 == r0,
+            (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
+            (Self::String(l0), Self::String(r0)) => l0 == r0,
+            (Self::Array(l0, l1), Self::Array(r0, r1)) => l0 == r0 && l1 == r1,
+            (Self::Function(_), Self::Function(_)) => false,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
 }
 
 impl Value {
@@ -94,7 +108,7 @@ impl Display for Value {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 enum Cache {
     Cached(Value),
     Uncached(ParseTree),
@@ -105,12 +119,6 @@ struct Object {
     locals: HashMap<String, Arc<Mutex<Object>>>,
     globals: HashMap<String, Arc<Mutex<Object>>>,
     value: Cache,
-}
-
-impl PartialEq for Object {
-    fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
-    }
 }
 
 impl Object {
@@ -143,12 +151,12 @@ impl Object {
         match self.value.clone() {
             Cache::Cached(v) => Ok(v),
             Cache::Uncached(tree) => {
-                let mut tree = vec![Ok(tree)].into_iter();
+                let mut t = vec![Ok(tree.clone())].into_iter();
 
-                let mut exec = Executor::new(&mut tree, &mut self.globals)
+                let mut exec = Executor::new(&mut t, &mut self.globals)
                     .locals(self.locals.clone());
 
-                let v = exec.next().unwrap()?;
+                let v = exec.exec(Box::new(tree))?;
 
                 self.value = Cache::Cached(v.clone());
 
@@ -157,11 +165,11 @@ impl Object {
         }
     }
 
-    pub fn locals(&self) -> HashMap<String, Arc<Mutex<Object>>> {
+    pub fn _locals(&self) -> HashMap<String, Arc<Mutex<Object>>> {
         self.locals.clone()
     }
 
-    pub fn globals(&self) -> HashMap<String, Arc<Mutex<Object>>> {
+    pub fn _globals(&self) -> HashMap<String, Arc<Mutex<Object>>> {
         self.globals.clone()
     }
 }
