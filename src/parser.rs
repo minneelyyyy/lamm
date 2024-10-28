@@ -1,6 +1,3 @@
-
-use crate::executor::Executor;
-
 use super::{Value, Type, Function, FunctionType};
 use super::tokenizer::{Token, TokenType, Op};
 use super::error::Error;
@@ -388,36 +385,35 @@ impl Parser {
                         Box::new(cond), Box::new(truebranch), Box::new(falsebranch))))
                 },
                 Op::Export => {
-                    let list = self.parse(tokens)?.ok_or(
-                        Error::new("export expects one argument of [String], but found nothing".into())
-                            .location(token.line, token.location.clone())
-                    )?;
+                    let token = tokens.next()
+                        .ok_or(Error::new("export expects one argument of [String], but found nothing".into())
+                            .location(token.line, token.location.clone()))??;
 
-                    let list = Executor::new().exec(list)?;
-
-                    if let Value::Array(Type::String, items) = list {
-                        let names = items.into_iter().map(|x| match x {
-                            Value::String(s) => s,
-                            _ => unreachable!(),
-                        });
-
-                        for name in names.clone() {
-                            let t = self.locals.remove(&name)
-                                .ok_or(
-                                    Error::new(format!("attempt to export {name}, which is not in local scope"))
-                                        .location(token.line, token.location.clone())
-                                )?;
-
-                            self.globals.insert(name, t);
+                    let names = match token.token() {
+                        TokenType::Identifier(ident) => vec![ident],
+                        TokenType::Operator(Op::OpenStatement) => {
+                            tokens
+                                .take_while(|token| !matches!(token.clone().map(|token| token.token()), Ok(TokenType::Operator(Op::CloseStatement))))
+                                .map(|token| token.map(|token| match token.token() {
+                                    TokenType::Identifier(ident) => Ok(ident),
+                                    _ => Err(Error::new(format!("expected an identifier")).location(token.line, token.location))
+                                })?)
+                                .collect::<Result<_, Error>>()?
                         }
+                        _ => return Err(Error::new("export expects one or more identifiers".into()).location(token.line, token.location)),
+                    };
 
-                        Ok(Some(ParseTree::Export(names.collect())))
-                    } else {
-                        Err(
-                            Error::new(format!("export expects one argument of [String], but found {}", list.get_type()))
-                                .location(token.line, token.location)
-                        )
+                    for name in &names {
+                        let (name, t) = self.locals.remove_entry(name)
+                            .ok_or(
+                                Error::new(format!("attempt to export {name}, which is not in local scope"))
+                                    .location(token.line, token.location.clone())
+                            )?;
+
+                        self.globals.insert(name, t);
                     }
+
+                    Ok(Some(ParseTree::Export(names)))
                 },
                 op => self.parse_operator(tokens, op).map(|x| Some(x)),
             },
