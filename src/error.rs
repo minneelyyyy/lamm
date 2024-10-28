@@ -54,7 +54,7 @@ impl fmt::Display for Error {
 
             if let Some(code) = &self.code {
                 let mut lines = code.lines();
-                let linect = match lines.nth(*line) {
+                let linect = match lines.nth(*line - 1) {
                     Some(l) => l,
                     None => return Ok(()), // there should probably be an error if the line number is somehow out of range
                 };

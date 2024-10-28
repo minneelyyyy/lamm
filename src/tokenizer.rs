@@ -240,10 +240,15 @@ impl<R: BufRead> Tokenizer<R> {
 
             while let Some(c) = self.next_char() {
                 match c {
-                    '"' => break,
+                    '"' => {
+                        let (line, col) = self.getpos();
+
+                        return Ok(Some(Token::new(TokenType::Constant(
+                            Value::String(token.clone())), token, line, col)));
+                    }
                     '\n' => return Err(
                         Error::new("Unclosed string literal".into())
-                            .location(line, col..self.getpos().1)
+                            .location(line, col..col+token.len()+1)
                             .note("newlines are not allowed in string literals (try \\n)".into())),
                     '\\' => match self.next_char() {
                         Some('\\') => token.push('\\'),
@@ -254,17 +259,16 @@ impl<R: BufRead> Tokenizer<R> {
                         Some(c) => token.push(c),
                         None => return Err(
                             Error::new("Unclosed string literal".into())
-                                .location(line, col..self.getpos().1)
+                                .location(line, col..token.len()+1)
                                 .note("end of file found before \"".into())),
                     }
                     _ => token.push(c),
-                }
+                };
             }
 
-            let (line, col) = self.getpos();
-
-            Ok(Some(Token::new(TokenType::Constant(
-                Value::String(token.clone())), token, line, col)))
+            Err(Error::new("Unclosed string literal".into())
+                .location(line, col..self.getpos().1+1)
+                .note("end of file found before \"".into()))
         } else if operators.keys().any(|x| x.starts_with(c)) {
             let mut token = String::from(c);
 
@@ -349,9 +353,8 @@ impl<R: BufRead> Tokenizer<R> {
         } else {
             let (line, col) = self.getpos();
 
-            return Err(
-                Error::new(format!("an unidentified character {c} was found"))
-                    .location(line, col - 1..col));
+            Err(Error::new(format!("an unidentified character {c} was found"))
+                    .location(line, col..col+1))
         }
     }
 }

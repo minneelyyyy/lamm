@@ -196,7 +196,7 @@ impl<R: BufRead> CodeIter<R> {
             reader,
             code: String::new(),
             pos: 0,
-            line: 0,
+            line: 1,
             column: 0,
         }
     }

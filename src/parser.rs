@@ -69,13 +69,13 @@ impl Parser {
         items.into_iter().fold(self, |acc, (k, v)| acc.add_global(k, v))
     }
 
-    pub(crate) fn add_local(mut self, k: String, v: Type) -> Self {
+    pub(crate) fn _add_local(mut self, k: String, v: Type) -> Self {
         self.locals.insert(k, v);
         self
     }
 
-    pub(crate) fn add_locals<Items: Iterator<Item = (String, Type)>>(self, items: Items) -> Self {
-        items.fold(self, |acc, (key, value)| acc.add_local(key, value))
+    pub(crate) fn _add_locals<Items: Iterator<Item = (String, Type)>>(self, items: Items) -> Self {
+        items.fold(self, |acc, (key, value)| acc._add_local(key, value))
     }
 
     fn add_local_mut(&mut self, k: String, v: Type) -> &mut Self {
