@@ -137,14 +137,12 @@ impl Token {
 #[derive(Clone)]
 pub(crate) struct Tokenizer<R: BufRead> {
     reader: Arc<Mutex<CodeIter<R>>>,
-    tokens: VecDeque<Token>,
 }
 
 impl<R: BufRead> Tokenizer<R> {
     pub fn new(reader: Arc<Mutex<CodeIter<R>>>) -> Self {
         Self {
             reader,
-            tokens: VecDeque::new(),
         }
     }
 
@@ -181,7 +179,7 @@ impl<R: BufRead> Tokenizer<R> {
     }
 
     /// Tokenizes more input and adds them to the internal queue
-    fn tokenize(&mut self) -> Result<(), Error> {
+    fn tokenize(&mut self) -> Result<Option<Token>, Error> {
         let operators: HashMap<&'static str, Op> = HashMap::from([
             ("+", Op::Add),
             ("-", Op::Sub),
@@ -220,7 +218,7 @@ impl<R: BufRead> Tokenizer<R> {
         let c = if let Some(c) = self.next_char() {
             c
         } else {
-            return Ok(());
+            return Ok(None);
         };
 
         if c.is_alphanumeric() {
@@ -232,9 +230,7 @@ impl<R: BufRead> Tokenizer<R> {
 
             let (line, column) = self.getpos();
 
-            self.tokens.push_back(Token::new(TokenType::parse(&token)
-                .map_err(|e| e.location(line, column - token.len() + 1..column + 1))?, token.clone(), line, column - token.len() + 1));
-            self.tokenize()
+            Ok(Some(Token::new(TokenType::parse(&token).map_err(|e| e.location(line, column - token.len() + 1..column + 1))?, token.clone(), line, column - token.len() + 1)))
         } else if c == '#' {
             while self.next_char_if(|&c| c != '\n').is_some() {}
             self.tokenize()
@@ -267,11 +263,8 @@ impl<R: BufRead> Tokenizer<R> {
 
             let (line, col) = self.getpos();
 
-            self.tokens.push_back(
-                Token::new(TokenType::Constant(
-                    Value::String(token.clone())), token, line, col));
-
-            self.tokenize()
+            Ok(Some(Token::new(TokenType::Constant(
+                Value::String(token.clone())), token, line, col)))
         } else if operators.keys().any(|x| x.starts_with(c)) {
             let mut token = String::from(c);
 
@@ -309,9 +302,7 @@ impl<R: BufRead> Tokenizer<R> {
 
                             let token = Token::new(t, token, line, col);
                             
-                            self.tokens.push_back(token);
-
-                            break;
+                            return Ok(Some(token));
                         } else {
                             let next = match self.next_char_if(is_expected) {
                                 Some(c) => c,
@@ -344,9 +335,8 @@ impl<R: BufRead> Tokenizer<R> {
                                 let (line, col) = self.getpos();
     
                                 let token = Token::new(t, token, line, col);
-                                
-                                self.tokens.push_back(token);
-                                break;
+
+                                return Ok(Some(token))
                             }
                         };
 
@@ -354,8 +344,6 @@ impl<R: BufRead> Tokenizer<R> {
                     }
                 }
             }
-
-            self.tokenize()
         } else if c.is_whitespace() {
             self.tokenize()
         } else {
@@ -372,16 +360,7 @@ impl<R: BufRead> Iterator for Tokenizer<R> {
     type Item = Result<Token, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(token) = self.tokens.pop_front() {
-            return Some(Ok(token));
-        } else {
-            match self.tokenize() {
-                Ok(_) => (),
-                Err(e) => return Some(Err(e)),
-            };
-
-            self.next()
-        }
+        self.tokenize().transpose()
     }
 }
 
@@ -392,7 +371,7 @@ mod tests {
 
     #[test]
     fn a() {
-        let program = ": f a * 12 a f 12";
+        let program = ": f a * 12 a f 12\n\n";
 
         let tokenizer = Tokenizer::new(Arc::new(Mutex::new(CodeIter::new(Cursor::new(program)))));
 
