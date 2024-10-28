@@ -1,6 +1,6 @@
 [package]
 name = "lamm"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "MIT"
 description = "a simple, functional paradigm programming language which uses Polish notation"
