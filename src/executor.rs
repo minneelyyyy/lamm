@@ -20,7 +20,7 @@ impl Executor {
         }
     }
 
-    pub(crate) fn values<I>(mut self, iter: I) -> impl Iterator<Item = Result<Value, Error>>
+    pub(crate) fn _values<I>(mut self, iter: I) -> impl Iterator<Item = Result<Value, Error>>
     where
         I: Iterator<Item = Result<ParseTree, Error>>
     {
@@ -42,6 +42,11 @@ impl Executor {
     }
 
     pub(crate) fn add_local(mut self, k: String, v: Arc<Mutex<Object>>) -> Self {
+        self.locals.insert(k, v);
+        self
+    }
+
+    pub(crate) fn add_local_mut(&mut self, k: String, v: Arc<Mutex<Object>>) -> &mut Self {
         self.locals.insert(k, v);
         self
     }
@@ -314,10 +319,12 @@ impl Executor {
                     let value = self.exec(*body)?;
                     let g = self.globals.clone();
 
-                    Executor::new()
-                        .locals(self.locals.clone())
-                        .add_local(ident, Arc::new(Mutex::new(Object::value(value, g, self.locals.to_owned()))))
-                        .exec(*scope)
+                    let r = self.add_local_mut(ident.clone(), Arc::new(Mutex::new(Object::value(value, g, self.locals.to_owned()))))
+                        .exec(*scope);
+
+                    self.locals.remove(&ident);
+
+                    r
                 }
             },
             ParseTree::LazyEqu(ident, body, scope) => {
@@ -325,22 +332,27 @@ impl Executor {
                     Err(Error::new(format!("attempt to override value of variable {ident}")))
                 } else {
                     let g = self.globals.clone();
-                    Executor::new()
-                        .locals(self.locals.clone())
-                        .add_local(ident, Arc::new(Mutex::new(Object::variable(*body, g, self.locals.to_owned()))))
-                        .exec(*scope)
+                    let r = self.add_local_mut(ident.clone(), Arc::new(Mutex::new(Object::variable(*body, g, self.locals.to_owned()))))
+                        .exec(*scope);
+
+                    self.locals.remove(&ident);
+
+                    r
                 }
             },
             ParseTree::FunctionDefinition(func, scope) => {
+                let name = func.name().unwrap().to_string();
                 let g = self.globals.clone();
-                Executor::new()
-                    .locals(self.locals.clone())
-                    .add_local(func.name().unwrap().to_string(),
+                let r = self.add_local_mut(name.clone(),
                         Arc::new(Mutex::new(Object::function(
                             func
                                 .globals(g)
                                 .locals(self.locals.clone()), HashMap::new(), HashMap::new()))))
-                    .exec(*scope)
+                    .exec(*scope);
+
+                self.locals.remove(&name);
+
+                r
             },
             ParseTree::FunctionCall(ident, args) => {
                 let obj = self.get_object_mut(&ident)?;

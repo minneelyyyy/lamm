@@ -1,4 +1,4 @@
-use std::collections::{VecDeque, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::{CodeIter, Type};

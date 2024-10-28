@@ -305,27 +305,18 @@ impl<R: BufRead> Runtime<R> {
 
         self
     }
-}
 
-impl<R: BufRead> Iterator for Runtime<R> {
-    type Item = Result<Value, Error>;
+    pub fn add_globals<Globals: IntoIterator<Item = (String, Value)>>(self, globals: Globals) -> Self {
+        globals.into_iter().fold(self, |acc, (key, value)| acc.add_global(&key, value))
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
+    pub fn values(&self) -> impl Iterator<Item = Result<Value, Error>> + use<'_, R> {
         let tokenizer = Tokenizer::new(self.reader.clone());
+        let parser = Parser::new().add_globals(self.global_types.clone());
 
-        let tree = Parser::new()
-            .add_globals(self.global_types.clone())
-            .parse(&mut tokenizer.peekable());
-
-        let tree = match tree.map_err(|e| e
-            .code(self.code())
-            .file(self.filename.clone()))
-        {
-            Ok(Some(tree)) => tree,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e))
-        };
-
-        Some(Executor::new().add_globals(self.globals.clone()).exec(tree))
+        Executor::new()
+            .add_globals(self.globals.clone())
+            ._values(parser.trees(tokenizer.peekable()))
+                .map(|r| r.map_err(|e| e.code(self.code()).file(self.filename.clone())))
     }
 }

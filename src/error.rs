@@ -59,12 +59,16 @@ impl fmt::Display for Error {
                     None => return Ok(()), // there should probably be an error if the line number is somehow out of range
                 };
 
-                write!(f, "\n| --> {filename}:{line}:{}\n| {linect}\n", loc.start)?;
+                let numspaces = " ".repeat((*line as f64).log10() as usize + 1);
+
+                write!(f, "\n --> {filename}:{line}:{}\n", loc.start)?;
+                write!(f, "{numspaces} |\n")?;
+                write!(f, "{line} | {linect}\n")?;
 
                 let spaces = " ".repeat(loc.start);
                 let pointers: String = loc.clone().map(|_| '^').collect();
 
-                write!(f, "|{spaces}{pointers}")?;
+                write!(f, "{numspaces} |{spaces}{pointers}")?;
 
                 if let Some(note) = &self.note {
                     write!(f, " {note}")?;

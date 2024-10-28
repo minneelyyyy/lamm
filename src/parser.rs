@@ -1,4 +1,6 @@
 
+use crate::executor::Executor;
+
 use super::{Value, Type, Function, FunctionType};
 use super::tokenizer::{Token, TokenType, Op};
 use super::error::Error;
@@ -67,20 +69,25 @@ impl Parser {
         items.into_iter().fold(self, |acc, (k, v)| acc.add_global(k, v))
     }
 
-    pub(crate) fn locals(mut self, locals: HashMap<String, Type>) -> Self {
-        self.locals = locals;
-        self
-    }
-
     pub(crate) fn add_local(mut self, k: String, v: Type) -> Self {
         self.locals.insert(k, v);
         self
     }
 
-    pub(crate) fn _add_locals<Items: Iterator<Item = (String, Type)>>(mut self, items: Items) -> Self {
-        items.for_each(|(name, t)| {
+    pub(crate) fn add_locals<Items: Iterator<Item = (String, Type)>>(self, items: Items) -> Self {
+        items.fold(self, |acc, (key, value)| acc.add_local(key, value))
+    }
+
+    fn add_local_mut(&mut self, k: String, v: Type) -> &mut Self {
+        self.locals.insert(k, v);
+        self
+    }
+
+    fn add_locals_mut<Items: IntoIterator<Item = (String, Type)>>(&mut self, items: Items) -> &mut Self {
+        for (name, t) in items {
             self.locals.insert(name, t);
-        });
+        }
+
         self
     }
 
@@ -229,9 +236,7 @@ impl Parser {
                         .into_iter()
                         .peekable();
 
-                    let trees: Vec<ParseTree> = Parser::new()
-                        .locals(self.locals.to_owned())
-                        .trees(array_tokens)
+                    let trees: Vec<ParseTree> = self.clone().trees(array_tokens)
                         .collect::<Result<_, Error>>()?;
 
                     let tree = trees.into_iter().fold(
@@ -268,9 +273,7 @@ impl Parser {
                         .into_iter()
                         .peekable();
 
-                    let trees: Vec<ParseTree> = Parser::new()
-                        .locals(self.locals.to_owned())
-                        .trees(array_tokens)
+                    let trees: Vec<ParseTree> = self.clone().trees(array_tokens)
                         .collect::<Result<_, Error>>()?;
 
                     let tree = trees.into_iter().fold(
@@ -287,21 +290,24 @@ impl Parser {
                             .note("expected an identifier after this token".into()))??;
 
                     if let TokenType::Identifier(ident) = token.token() {
-                        let body = Box::new(self.parse(tokens)?.ok_or(Error::new(format!("the variable `{ident}` has no value"))
+                        let body = self.parse(tokens)?.ok_or(Error::new(format!("the variable `{ident}` has no value"))
                             .location(token.line, token.location.clone())
-                            .note("expected a value after this identifier".into()))?);
+                            .note("expected a value after this identifier".into()))?;
 
-                        let scope = Parser::new()
-                            .locals(self.locals.clone())
-                            .add_local(ident.clone(), Type::Any)
+                        let scope = self.add_local_mut(ident.clone(), Type::Any)
                             .parse(tokens)?
                             .ok_or(Error::new("variable declaration requires a scope defined after it".into())
                                 .location(token.line, token.location)
                                 .note(format!("this variable {ident} has no scope")))?;
+                        
+                        // temporary fix: just remove the identifier
+                        // ignore errors removing, in the case that the symbol was already exported, it won't be present in locals
+                        // this comes down to a basic architectural error. globals need to stick to the parser while locals need to be scoped.
+                        self.locals.remove(&ident);
 
                         Ok(Some(ParseTree::Equ(
                             ident.clone(),
-                            body,
+                            Box::new(body),
                             Box::new(scope))
                         ))
                     } else {
@@ -310,7 +316,7 @@ impl Parser {
                 },
                 Op::LazyEqu => {
                     let token = tokens.next()
-                        .ok_or(Error::new("no identifier given for = expression".into())
+                        .ok_or(Error::new("no identifier given for . expression".into())
                             .location(token.line, token.location)
                             .note("expected an identifier after this token".into()))??;
 
@@ -319,13 +325,15 @@ impl Parser {
                             .location(token.line, token.location.clone())
                             .note("expected a value after this identifier".into()))?);
 
-                        let scope = Parser::new()
-                            .locals(self.locals.clone())
-                            .add_local(ident.clone(), Type::Any)
+                        let scope = self.add_local_mut(ident.clone(), Type::Any)
                             .parse(tokens)?
                             .ok_or(Error::new("variable declaration requires a scope defined after it".into())
                                 .location(token.line, token.location)
                                 .note(format!("this variable {ident} has no scope")))?;
+                        
+                        // temporary fix: just remove the identifier
+                        // ignore errors removing, in the case that the symbol was already exported, it won't be present in locals
+                        self.locals.remove(&ident);
 
                         Ok(Some(ParseTree::LazyEqu(
                             ident.clone(),
@@ -339,13 +347,13 @@ impl Parser {
                 Op::FunctionDefine(arg_count) => {
                     let f = self.parse_function_definition(tokens, arg_count)?;
 
-                    let scope = Parser::new()
-                        .locals(self.locals.clone())
-                        .add_local(f.name().unwrap().to_string(), Type::Function(f.get_type()))
+                    let scope = self.add_local_mut(f.name().unwrap().to_string(), Type::Function(f.get_type()))
                         .parse(tokens)?
                             .ok_or(Error::new("function declaration requires a scope defined after it".into())
                             .location(token.line, token.location)
                             .note(format!("this function {} has no scope", f.name().unwrap())))?;
+                    
+                    self.locals.remove(f.name().unwrap());
 
                     Ok(Some(ParseTree::FunctionDefinition( f.clone(), Box::new(scope))))
                 },
@@ -379,7 +387,38 @@ impl Parser {
                     Ok(Some(ParseTree::IfElse(
                         Box::new(cond), Box::new(truebranch), Box::new(falsebranch))))
                 },
-                Op::Export => todo!(),
+                Op::Export => {
+                    let list = self.parse(tokens)?.ok_or(
+                        Error::new("export expects one argument of [String], but found nothing".into())
+                            .location(token.line, token.location.clone())
+                    )?;
+
+                    let list = Executor::new().exec(list)?;
+
+                    if let Value::Array(Type::String, items) = list {
+                        let names = items.into_iter().map(|x| match x {
+                            Value::String(s) => s,
+                            _ => unreachable!(),
+                        });
+
+                        for name in names.clone() {
+                            let t = self.locals.remove(&name)
+                                .ok_or(
+                                    Error::new(format!("attempt to export {name}, which is not in local scope"))
+                                        .location(token.line, token.location.clone())
+                                )?;
+
+                            self.globals.insert(name, t);
+                        }
+
+                        Ok(Some(ParseTree::Export(names.collect())))
+                    } else {
+                        Err(
+                            Error::new(format!("export expects one argument of [String], but found {}", list.get_type()))
+                                .location(token.line, token.location)
+                        )
+                    }
+                },
                 op => self.parse_operator(tokens, op).map(|x| Some(x)),
             },
             _ => Err(Error::new(format!("the token {} was unexpected", token.lexeme)).location(token.line, token.location)),
@@ -396,8 +435,7 @@ impl Parser {
         }
 
         Ok(Function::lambda(t, args, Box::new(
-            Parser::new()
-                .locals(locals).parse(tokens)?.ok_or(Error::new("lambda requires a body".into()))?)))
+            self.clone().add_locals_mut(locals).parse(tokens)?.ok_or(Error::new("lambda requires a body".into()))?)))
     }
 
     fn parse_function_definition<I: Iterator<Item = Result<Token, Error>>>(&mut self, tokens: &mut Peekable<I>, arg_count: usize) -> Result<Function, Error> {
@@ -413,8 +451,7 @@ impl Parser {
         locals.insert(name.clone(), Type::Function(t.clone()));
 
         Ok(Function::named(&name, t, args, Box::new(
-            Parser::new()
-                .locals(locals).parse(tokens)?.ok_or(Error::new("function requires a body".into()))?)))
+            self.clone().add_locals_mut(locals).parse(tokens)?.ok_or(Error::new("function requires a body".into()))?)))
     }
 
     fn parse_function_declaration<I: Iterator<Item = Result<Token, Error>>>(
