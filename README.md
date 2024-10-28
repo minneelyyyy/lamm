@@ -64,12 +64,12 @@ You can introduce a variable to global scope using the `export` builtin function
 ```
 # A very useful constant
 = pi 3.1415926
-export ["pi"]
+export pi
 
 # Some more useful constants
 = e 2.71828
 = phi 1.6180339887
-export ["e" "phi"]
+export (e phi)
 ```
 
 ## Functions
