@@ -1,6 +1,7 @@
 use crate::parser::ParseTree;
-use crate::executor::{Executor, RuntimeError};
+use crate::executor::Executor;
 use crate::{Type, Object, Value};
+use super::error::Error;
 
 use std::collections::HashMap;
 use std::fmt::{self, Display};
@@ -140,13 +141,11 @@ impl Function {
 		self.t.clone()
 	}
 
-	pub(crate) fn call(&mut self, args: Vec<Arc<Mutex<Object>>>) -> Result<Value, RuntimeError> {
-        let mut tree = vec![Ok(*self.body.clone())].into_iter();
-        let mut globals = self.globals.clone().unwrap();
+	pub(crate) fn call(&mut self, args: Vec<Arc<Mutex<Object>>>) -> Result<Value, Error> {
+        let globals = self.globals.clone().unwrap();
         let locals = self.locals.clone().unwrap();
 
-        let mut exec = Executor::new(&mut tree, &mut globals)
-            .locals(locals.clone());
+        let mut exec = Executor::new().add_globals(globals).locals(locals.clone());
 
         if let Some(names) = self.arg_names.clone() {
             for (obj, name) in std::iter::zip(args.clone().into_iter(), names.into_iter()) {
@@ -158,7 +157,7 @@ impl Function {
             exec = exec.add_local(name, Arc::new(Mutex::new(Object::function(self.clone(), self.globals.clone().unwrap(), locals))));
         }
 
-        exec.exec(self.body.clone())
+        exec.exec(*self.body.clone())
 	}
 }
 

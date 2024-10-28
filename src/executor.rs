@@ -1,102 +1,66 @@
 use super::{Value, Type, Object};
-use super::parser::{ParseTree, ParseError};
+use super::parser::ParseTree;
 use super::tokenizer::Op;
+use super::error::Error;
 
 use std::collections::HashMap;
-use std::fmt::Display;
-use std::error::Error;
-use std::io;
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug)]
-pub enum RuntimeError {
-    ParseError(ParseError),
-    NoOverloadForTypes(String, Vec<Value>),
-    ImmutableError(String),
-    VariableUndefined(String),
-    FunctionUndeclared(String),
-    FunctionUndefined(String),
-    NotAVariable(String),
-    ParseFail(String, Type),
-    TypeError(Type, Type),
-    EmptyArray,
-    IO(io::Error),
-}
-
-impl Display for RuntimeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ParseError(e) => write!(f, "Parser Error: {e}"),
-            Self::NoOverloadForTypes(op, values)
-                => write!(f, "No overload of `{op}` exists for the operands `{}`", 
-                    values.iter().map(|x| format!("{}({x})", x.get_type())).collect::<Vec<_>>().join(", ")),
-            Self::ImmutableError(ident) => write!(f, "`{ident}` already exists and cannot be redefined"),
-            Self::VariableUndefined(ident) => write!(f, "variable `{ident}` was not defined"),
-            Self::FunctionUndeclared(ident) => write!(f, "function `{ident}` was not declared"),
-            Self::FunctionUndefined(ident) => write!(f, "function `{ident}` was not defined"),
-            Self::NotAVariable(ident) => write!(f, "`{ident}` is a function but was attempted to be used like a variable"),
-            Self::ParseFail(s, t) => write!(f, "`\"{s}\"` couldn't be parsed into {}", t),
-            Self::IO(e) => write!(f, "{e}"),
-            Self::TypeError(left, right) => write!(f, "expected type `{left}` but got type `{right}`"),
-            Self::EmptyArray => write!(f, "attempt to access element from an empty array"),
-        }
-    }
-}
-
-impl Error for RuntimeError {}
-
 /// Executes an input of ParseTrees
-pub struct Executor<'a, I>
-where
-    I: Iterator<Item = Result<ParseTree, ParseError>>
-{
-    exprs: &'a mut I,
-    globals: &'a mut HashMap<String, Arc<Mutex<Object>>>,
+pub(crate) struct Executor {
+    globals: HashMap<String, Arc<Mutex<Object>>>,
     locals: HashMap<String, Arc<Mutex<Object>>>,
 }
 
-impl<'a, I> Executor<'a, I>
-where
-    I: Iterator<Item = Result<ParseTree, ParseError>>,
-{
-    pub fn new(exprs: &'a mut I, globals: &'a mut HashMap<String, Arc<Mutex<Object>>>) -> Self {
+impl Executor {
+    pub(crate) fn new() -> Self {
         Self {
-            exprs,
-            globals,
+            globals: HashMap::new(),
             locals: HashMap::new(),
         }
     }
 
-    pub fn _add_global(self, k: String, v: Arc<Mutex<Object>>) -> Self {
+    pub(crate) fn values<I>(mut self, iter: I) -> impl Iterator<Item = Result<Value, Error>>
+    where
+        I: Iterator<Item = Result<ParseTree, Error>>
+    {
+        iter.map(move |x| self.exec(x?))
+    }
+
+    pub(crate) fn add_global(mut self, k: String, v: Arc<Mutex<Object>>) -> Self {
         self.globals.insert(k, v);
         self
     }
 
-    pub fn locals(mut self, locals: HashMap<String, Arc<Mutex<Object>>>) -> Self {
+    pub(crate) fn add_globals<Globals: IntoIterator<Item = (String, Arc<Mutex<Object>>)>>(self, globals: Globals) -> Self {
+        globals.into_iter().fold(self, |acc, (k, v)| acc.add_global(k, v))
+    }
+
+    pub(crate) fn locals(mut self, locals: HashMap<String, Arc<Mutex<Object>>>) -> Self {
         self.locals = locals;
         self
     }
 
-    pub fn add_local(mut self, k: String, v: Arc<Mutex<Object>>) -> Self {
+    pub(crate) fn add_local(mut self, k: String, v: Arc<Mutex<Object>>) -> Self {
         self.locals.insert(k, v);
         self
     }
 
-    fn _get_object(&self, ident: &String) -> Result<&Arc<Mutex<Object>>, RuntimeError> {
+    fn _get_object(&self, ident: &String) -> Result<&Arc<Mutex<Object>>, Error> {
         self.locals.get(ident).or(self.globals.get(ident))
-            .ok_or(RuntimeError::VariableUndefined(ident.clone()))
+            .ok_or(Error::new(format!("undefined identifier {}", ident.clone())))
     }
 
-    fn get_object_mut(&mut self, ident: &String) -> Result<&mut Arc<Mutex<Object>>, RuntimeError> {
+    fn get_object_mut(&mut self, ident: &String) -> Result<&mut Arc<Mutex<Object>>, Error> {
         self.locals.get_mut(ident).or(self.globals.get_mut(ident))
-            .ok_or(RuntimeError::VariableUndefined(ident.clone()))
+            .ok_or(Error::new(format!("undefined identifier {}", ident.clone())))
     }
 
     fn variable_exists(&self, ident: &String) -> bool {
         self.locals.contains_key(ident) || self.globals.contains_key(ident)
     }
 
-    fn eval(obj: &mut Arc<Mutex<Object>>) -> Result<Value, RuntimeError> {
+    fn eval(obj: &mut Arc<Mutex<Object>>) -> Result<Value, Error> {
         let mut guard = obj.lock().unwrap();
 
         let v = guard.eval()?;
@@ -120,11 +84,11 @@ where
         locals
     }
 
-    pub fn exec(&mut self, tree: Box<ParseTree>) -> Result<Value, RuntimeError> {
-        match *tree {
+    pub(crate) fn exec(&mut self, tree: ParseTree) -> Result<Value, Error> {
+        match tree {
             ParseTree::Operator(op, args) => {
                 let args: Vec<Value> = args.into_iter()
-                    .map(|x| self.exec(Box::new(x))).collect::<Result<_, _>>()?;
+                    .map(|x| self.exec(x)).collect::<Result<_, _>>()?;
 
                 match op {
                     Op::Add => match &args[..] {
@@ -135,7 +99,7 @@ where
                         [Value::String(x), Value::String(y)] => Ok(Value::String(format!("{x}{y}"))),
                         [Value::Array(xtype, x), Value::Array(ytype, y)] => {
                             if xtype != ytype {
-                                return Err(RuntimeError::TypeError(xtype.clone(), ytype.clone()));
+                                return Err(Error::new(format!("expected type {} but found {}", xtype, ytype)));
                             }
 
                             Ok(Value::Array(xtype.clone(), [x.clone(), y.clone()].concat()))
@@ -146,7 +110,7 @@ where
                             let ytype = y.get_type();
 
                             if *t != ytype {
-                                return Err(RuntimeError::TypeError(t.clone(), ytype));
+                                return Err(Error::new(format!("expected type {} but found {}", t, ytype)));
                             }
 
                             // NOTE: use y's type instead of the arrays type.
@@ -158,13 +122,13 @@ where
                             let xtype = x.get_type();
 
                             if *t != xtype {
-                                return Err(RuntimeError::TypeError(t.clone(), xtype));
+                                return Err(Error::new(format!("expected type {} but found {}", t, xtype)));
                             }
 
                             // NOTE: read above
                             Ok(Value::Array(xtype, [vec![x.clone()], y.clone()].concat()))
                         },
-                        _ => Err(RuntimeError::NoOverloadForTypes("+".into(), args)),
+                        _ => Err(Error::new("todo: add".into())),
                     }
                     Op::Sub => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x - y)),
@@ -173,7 +137,7 @@ where
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x - y)),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("-".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::Mul => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x * y)),
@@ -182,7 +146,7 @@ where
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x * y)),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("*".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::Div => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Float(*x as f64 / *y as f64)),
@@ -191,7 +155,7 @@ where
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x / y)),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("/".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::FloorDiv => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x / y)),
@@ -200,7 +164,7 @@ where
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Int(*x as i64 / *y as i64)),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("//".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::Exp => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Float((*x as f64).powf(*y as f64))),
@@ -209,7 +173,7 @@ where
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x.powf(*y))),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("**".into(), args)),
+                        _ => Err(Error::new("todo: fsadfdsf".into())),
                     }
                     Op::Mod => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x % y)),
@@ -218,85 +182,85 @@ where
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x % y)),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("%".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::GreaterThan => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x > y)),
                         [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x > *y as f64)),
                         [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 > *y)),
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x > y)),
-                        _ => Err(RuntimeError::NoOverloadForTypes(">".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::GreaterThanOrEqualTo => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x >= y)),
                         [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x >= *y as f64)),
                         [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 >= *y)),
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x >= y)),
-                        _ => Err(RuntimeError::NoOverloadForTypes(">=".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::LessThan => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x < y)),
                         [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x < *y as f64)),
                         [Value::Int(x), Value::Float(y)] => Ok(Value::Bool((*x as f64) < *y)),
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x < y)),
-                        _ => Err(RuntimeError::NoOverloadForTypes("<".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::LessThanOrEqualTo => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x <= y)),
                         [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x <= *y as f64)),
                         [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 <= *y)),
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x <= y)),
-                        _ => Err(RuntimeError::NoOverloadForTypes("<=".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::EqualTo => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x == y)),
                         [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x == *y as f64)),
                         [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 == *y)),
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x == y)),
-                        _ => Err(RuntimeError::NoOverloadForTypes("==".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::NotEqualTo => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x != y)),
                         [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x != *y as f64)),
                         [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 != *y)),
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x != y)),
-                        _ => Err(RuntimeError::NoOverloadForTypes("!=".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::Not => match &args[0] {
                         Value::Bool(b) => Ok(Value::Bool(!b)),
-                        _ => Err(RuntimeError::NoOverloadForTypes("!".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::Or => match &args[..] {
                         [Value::Bool(x), Value::Bool(y)] => Ok(Value::Bool(*x || *y)),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("||".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::And => match &args[..] {
                         [Value::Bool(x), Value::Bool(y)] => Ok(Value::Bool(*x && *y)),
                         [Value::Nil, x] => Ok(x.clone()),
                         [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("&&".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::Compose => match &args[..] {
                         [_, v] => Ok(v.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("~".into(), args)),
+                        _ => Err(Error::new("todo: actual error output".into())),
                     }
                     Op::Head => match &args[0] {
-                        Value::Array(_, x) => Ok(x.first().ok_or(RuntimeError::EmptyArray)?.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("head".into(), args)),
+                        Value::Array(_, x) => Ok(x.first().ok_or(Error::new(format!("passed an empty array to head")))?.clone()),
+                        _ => Err(Error::new("head".into())),
                     }
                     Op::Tail => match &args[0] {
                         Value::Array(t, x) => Ok(Value::Array(t.clone(), if x.len() > 0 { x[1..].to_vec() } else { vec![] })),
-                        _ => Err(RuntimeError::NoOverloadForTypes("head".into(), args)),
+                        _ => Err(Error::new("tail".into())),
                     }
                     Op::Init => match &args[0] {
                         Value::Array(t, x) => Ok(Value::Array(t.clone(), if x.len() > 0 { x[..x.len() - 1].to_vec() } else { vec![] })),
-                        _ => Err(RuntimeError::NoOverloadForTypes("head".into(), args)),
+                        _ => Err(Error::new("init".into())),
                     }
                     Op::Fini => match &args[0] {
-                        Value::Array(_, x) => Ok(x.last().ok_or(RuntimeError::EmptyArray)?.clone()),
-                        _ => Err(RuntimeError::NoOverloadForTypes("head".into(), args)),
+                        Value::Array(_, x) => Ok(x.last().ok_or(Error::new(format!("passed an empty array to fini")))?.clone()),
+                        _ => Err(Error::new("fini".into())),
                     }
                     Op::Id => match &args[0] {
                         x => Ok(x.clone()),
@@ -306,20 +270,20 @@ where
                         Value::Float(x) => Ok(Value::Int(*x as i64)),
                         Value::Bool(x) => Ok(Value::Int(if *x { 1 } else { 0 })),
                         Value::String(x) => {
-                            let r: i64 = x.parse().map_err(|_| RuntimeError::ParseFail(x.clone(), Type::Int))?;
+                            let r: i64 = x.parse().map_err(|_| Error::new(format!("failed to parse {} into {}", x, Type::Int)))?;
                             Ok(Value::Int(r))
                         }
-                            x => Err(RuntimeError::NoOverloadForTypes("int".into(), vec![x.clone()])),
+                            x => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Int))),
                     }
                     Op::FloatCast => match &args[0] {
                         Value::Int(x) => Ok(Value::Float(*x as f64)),
                         Value::Float(x) => Ok(Value::Float(*x)),
                         Value::Bool(x) => Ok(Value::Float(if *x { 1.0 } else { 0.0 })),
                         Value::String(x) => {
-                            let r: f64 = x.parse().map_err(|_| RuntimeError::ParseFail(x.clone(), Type::Int))?;
+                            let r: f64 = x.parse().map_err(|_| Error::new(format!("failed to parse {} into {}", x, Type::Float)))?;
                             Ok(Value::Float(r))
                         }
-                        x => Err(RuntimeError::NoOverloadForTypes("float".into(), vec![x.clone()])),
+                        x => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Float))),
                     }
                     Op::BoolCast => match &args[0] {
                         Value::Int(x) => Ok(Value::Bool(*x != 0)),
@@ -327,7 +291,7 @@ where
                         Value::Bool(x) => Ok(Value::Bool(*x)),
                         Value::String(x) => Ok(Value::Bool(!x.is_empty())),
                         Value::Array(_, vec) => Ok(Value::Bool(!vec.is_empty())),
-                        x => Err(RuntimeError::NoOverloadForTypes("bool".into(), vec![x.clone()])),
+                        x => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Bool))),
                     }
                     Op::StringCast => Ok(Value::String(format!("{}", &args[0]))),
                     Op::Print => match &args[0] {
@@ -345,38 +309,38 @@ where
             }
             ParseTree::Equ(ident, body, scope) => {
                 if self.variable_exists(&ident) {
-                    Err(RuntimeError::ImmutableError(ident.clone()))
+                    Err(Error::new(format!("attempt to override value of variable {ident}")))
                 } else {
-                    let value = self.exec(body)?;
+                    let value = self.exec(*body)?;
                     let g = self.globals.clone();
 
-                    Executor::new(self.exprs, &mut self.globals)
+                    Executor::new()
                         .locals(self.locals.clone())
                         .add_local(ident, Arc::new(Mutex::new(Object::value(value, g, self.locals.to_owned()))))
-                        .exec(scope)
+                        .exec(*scope)
                 }
             },
             ParseTree::LazyEqu(ident, body, scope) => {
                 if self.variable_exists(&ident) {
-                    Err(RuntimeError::ImmutableError(ident.clone()))
+                    Err(Error::new(format!("attempt to override value of variable {ident}")))
                 } else {
                     let g = self.globals.clone();
-                    Executor::new(self.exprs, &mut self.globals)
+                    Executor::new()
                         .locals(self.locals.clone())
                         .add_local(ident, Arc::new(Mutex::new(Object::variable(*body, g, self.locals.to_owned()))))
-                        .exec(scope)
+                        .exec(*scope)
                 }
             },
             ParseTree::FunctionDefinition(func, scope) => {
                 let g = self.globals.clone();
-                Executor::new(self.exprs, &mut self.globals)
+                Executor::new()
                     .locals(self.locals.clone())
                     .add_local(func.name().unwrap().to_string(),
                         Arc::new(Mutex::new(Object::function(
                             func
                                 .globals(g)
                                 .locals(self.locals.clone()), HashMap::new(), HashMap::new()))))
-                    .exec(scope)
+                    .exec(*scope)
             },
             ParseTree::FunctionCall(ident, args) => {
                 let obj = self.get_object_mut(&ident)?;
@@ -394,35 +358,35 @@ where
 
                         f.call(args)
                     },
-                    _ => Err(RuntimeError::FunctionUndefined(ident.clone()))
+                    _ => Err(Error::new(format!("the function {ident} is not defined")))
                 }
             },
             ParseTree::_FunctionCallLocal(_idx, _args) => todo!(),
-            ParseTree::If(cond, body) => if match self.exec(cond)? {
+            ParseTree::If(cond, body) => if match self.exec(*cond)? {
                 Value::Float(f) => f != 0.0,
                 Value::Int(i) => i != 0,
                 Value::Bool(b) => b,
                 Value::String(s) => !s.is_empty(),
                 Value::Array(_, vec) => !vec.is_empty(),
                 Value::Nil => false,
-                x => return Err(RuntimeError::NoOverloadForTypes("?".into(), vec![x])),
+                x => return Err(Error::new(format!("could not convert {x} into a bool for truthiness check"))),
             } {
-                self.exec(body)
+                self.exec(*body)
             } else {
                 Ok(Value::Nil)
             },
-            ParseTree::IfElse(cond, istrue, isfalse) => if match self.exec(cond)? {
+            ParseTree::IfElse(cond, istrue, isfalse) => if match self.exec(*cond)? {
                 Value::Float(f) => f != 0.0,
                 Value::Int(i) => i != 0,
                 Value::Bool(b) => b,
                 Value::String(s) => !s.is_empty(),
                 Value::Array(_, vec) => !vec.is_empty(),
                 Value::Nil => false,
-                x => return Err(RuntimeError::NoOverloadForTypes("??".into(), vec![x])),
+                x => return Err(Error::new(format!("could not convert {x} into a bool for truthiness check"))),
             } {
-                self.exec(istrue)
+                self.exec(*istrue)
             } else {
-                self.exec(isfalse)
+                self.exec(*isfalse)
             },
             ParseTree::Variable(ident) => {
                 let obj = self.get_object_mut(&ident)?;
@@ -436,7 +400,7 @@ where
             ParseTree::Nop => Ok(Value::Nil),
             ParseTree::Export(names) => {
                 for name in names {
-                    let obj = self.locals.remove(&name).ok_or(RuntimeError::VariableUndefined(name.clone()))?;
+                    let obj = self.locals.remove(&name).ok_or(Error::new(format!("attempt to export an object that was not defined")))?;
                     self.globals.insert(name, obj);
                 }
 
@@ -451,20 +415,6 @@ where
             }
             ParseTree::_Local(_idx) => todo!(),
             ParseTree::GeneratedFunction(function) => Ok(Value::Function(function.globals(self.globals.clone()).locals(self.locals.clone()))),
-        }
-    }
-}
-
-impl<'a, I: Iterator<Item = Result<ParseTree, ParseError>>> Iterator for Executor<'a, I> {
-    type Item = Result<Value, RuntimeError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let expr = self.exprs.next();
-
-        match expr {
-            Some(Ok(expr)) => Some(self.exec(Box::new(expr))),
-            Some(Err(e)) => Some(Err(RuntimeError::ParseError(e))),
-            None => None,
         }
     }
 }

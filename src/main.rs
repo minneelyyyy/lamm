@@ -1,12 +1,12 @@
 use std::io::{self, BufReader};
 
 fn main() {
-	let mut runtime = lamm::Runtime::new(BufReader::new(io::stdin()), "<stdin>");
+	let runtime = lamm::Runtime::new(BufReader::new(io::stdin()), "<stdin>");
 
-	for value in runtime.values() {
+	for value in runtime {
 		match value {
 			Ok(v) => println!("=> {v}"),
-			Err(e) => eprintln!("{e}"),
+			Err(e) => eprintln!("error: {e}"),
 		}
 	}
 }
