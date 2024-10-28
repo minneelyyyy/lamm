@@ -246,7 +246,7 @@ impl<R: BufRead> Iterator for CodeIter<R> {
                     self.column = 0;
                     self.pos += 1;
 
-                    None
+                    Some('\n')
                 },
                 c => {
                     self.column += 1;

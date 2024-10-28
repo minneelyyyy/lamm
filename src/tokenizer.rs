@@ -363,20 +363,3 @@ impl<R: BufRead> Iterator for Tokenizer<R> {
         self.tokenize().transpose()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    #[test]
-    fn a() {
-        let program = ": f a * 12 a f 12\n\n";
-
-        let tokenizer = Tokenizer::new(Arc::new(Mutex::new(CodeIter::new(Cursor::new(program)))));
-
-        let t: Vec<_> = tokenizer.collect();
-
-        println!("{t:#?}");
-    }
-}
