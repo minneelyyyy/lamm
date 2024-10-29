@@ -102,6 +102,12 @@ impl Executor {
                         [Value::Int(x), Value::Float(y)] => Ok(Value::Float(*x as f64 + y)),
                         [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x + y)),
                         [Value::String(x), Value::String(y)] => Ok(Value::String(format!("{x}{y}"))),
+                        [Value::Nil, x] => Ok(x.clone()),
+                        [x, Value::Nil] => Ok(x.clone()),
+                        [x, y] => Err(Error::new(format!("no overload of + exists for types {} and {}", x.get_type(), y.get_type()))),
+                        _ => unreachable!(),
+                    }
+                    Op::Concat => match &args[..] {
                         [Value::Array(xtype, x), Value::Array(ytype, y)] => {
                             if xtype != ytype {
                                 return Err(Error::new(format!("expected type {} but found {}", xtype, ytype)));
@@ -109,20 +115,9 @@ impl Executor {
 
                             Ok(Value::Array(xtype.clone(), [x.clone(), y.clone()].concat()))
                         },
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        [Value::Array(t, x), y] => {
-                            let ytype = y.get_type();
-
-                            if *t != ytype {
-                                return Err(Error::new(format!("expected type {} but found {}", t, ytype)));
-                            }
-
-                            // NOTE: use y's type instead of the arrays type.
-                            // an `empty` array has Any type, but any value will have a fixed type.
-                            // this converts the empty array into a typed array.
-                            Ok(Value::Array(ytype, [x.clone(), vec![y.clone()]].concat()))
-                        },
+                        _ => Err(Error::new("++".into())),
+                    }
+                    Op::Prepend => match &args[..] {
                         [x, Value::Array(t, y)] => {
                             let xtype = x.get_type();
 
@@ -130,10 +125,41 @@ impl Executor {
                                 return Err(Error::new(format!("expected type {} but found {}", t, xtype)));
                             }
 
-                            // NOTE: read above
                             Ok(Value::Array(xtype, [vec![x.clone()], y.clone()].concat()))
                         },
-                        _ => Err(Error::new("todo: add".into())),
+                        [x, y] => Err(Error::new(format!("no overload of [+ exists for types {} and {}", x.get_type(), y.get_type()))),
+                        _ => unreachable!(),
+                    }
+                    Op::Append => match &args[..] {
+                        [Value::Array(t, y), x] => {
+                            let xtype = x.get_type();
+
+                            if *t != xtype {
+                                return Err(Error::new(format!("expected type {} but found {}", t, xtype)));
+                            }
+
+                            Ok(Value::Array(xtype, [y.clone(), vec![x.clone()]].concat()))
+                        },
+                        _ => Err(Error::new("+]".into())),
+                    }
+                    Op::Insert => match &args[..] {
+                        [Value::Int(idx), x, Value::Array(t, y)] => {
+                            let mut y = y.clone();
+                            let xtype = x.get_type();
+
+                            if *t != xtype {
+                                return Err(Error::new(format!("expected type {} but found {}", t, xtype)));
+                            }
+                            
+                            if *idx as usize > y.len() {
+                                return Err(Error::new("attempt to insert out of array len".into()));
+                            }
+
+                            y.insert(*idx as usize, x.clone());
+
+                            Ok(Value::Array(t.clone(), y))
+                        },
+                        _ => Err(Error::new("[+]".into())),
                     }
                     Op::Sub => match &args[..] {
                         [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x - y)),

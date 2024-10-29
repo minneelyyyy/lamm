@@ -42,6 +42,10 @@ pub enum Op {
     Print,
     OpenArray,
     CloseArray,
+    Concat,
+    Prepend,
+    Append,
+    Insert,
     OpenStatement,
     CloseStatement,
     Empty,
@@ -207,6 +211,10 @@ impl<R: BufRead> Tokenizer<R> {
             ("!=", Op::NotEqualTo),
             ("[", Op::OpenArray),
             ("]", Op::CloseArray),
+            ("++", Op::Concat),
+            ("[+", Op::Prepend),
+            ("+]", Op::Append),
+            ("[+]", Op::Insert),
             ("(", Op::OpenStatement),
             (")", Op::CloseStatement),
             ("!", Op::Not),
@@ -364,5 +372,20 @@ impl<R: BufRead> Iterator for Tokenizer<R> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.tokenize().transpose()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn meow() {
+        let program = "[+] 0 1 [2 3]";
+
+        let tokens: Vec<_> = Tokenizer::new(Arc::new(Mutex::new(CodeIter::new(Cursor::new(program))))).collect();
+
+        println!("{tokens:#?}");
     }
 }

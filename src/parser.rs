@@ -125,6 +125,10 @@ impl Parser {
             (Op::And, FunctionType(Box::new(Type::Bool), vec![Type::Bool, Type::Bool])),
             (Op::Or, FunctionType(Box::new(Type::Bool), vec![Type::Bool, Type::Bool])),
             (Op::Head, FunctionType(Box::new(Type::Any), vec![Type::Array(Box::new(Type::Any))])),
+            (Op::Concat, FunctionType(Box::new(Type::Array(Box::new(Type::Any))), vec![Type::Array(Box::new(Type::Any)), Type::Array(Box::new(Type::Any))])),
+            (Op::Prepend, FunctionType(Box::new(Type::Array(Box::new(Type::Any))), vec![Type::Any, Type::Array(Box::new(Type::Any))])),
+            (Op::Append, FunctionType(Box::new(Type::Array(Box::new(Type::Any))), vec![Type::Array(Box::new(Type::Any)), Type::Any])),
+            (Op::Insert, FunctionType(Box::new(Type::Array(Box::new(Type::Any))), vec![Type::Int, Type::Any, Type::Array(Box::new(Type::Any))])),
             (Op::Tail, FunctionType(Box::new(Type::Array(Box::new(Type::Any))), vec![Type::Array(Box::new(Type::Any))])),
             (Op::Init, FunctionType(Box::new(Type::Array(Box::new(Type::Any))), vec![Type::Array(Box::new(Type::Any))])),
             (Op::Fini, FunctionType(Box::new(Type::Any), vec![Type::Array(Box::new(Type::Any))])),
@@ -238,7 +242,7 @@ impl Parser {
 
                     let tree = trees.into_iter().fold(
                         ParseTree::Value(Value::Array(Type::Any, vec![])),
-                        |acc, x| ParseTree::Operator(Op::Add, vec![acc, x.clone()]),
+                        |acc, x| ParseTree::Operator(Op::Append, vec![acc, x.clone()]),
                     );
 
                     Ok(Some(tree))
@@ -372,21 +376,21 @@ impl Parser {
                 },
                 Op::IfElse => {
                     let cond = self.parse(tokens)?
-                    .ok_or(Error::new("?? statement requires a condition".into())
-                        .location(token.line, token.location.clone()))?;
+                        .ok_or(Error::new("?? statement requires a condition".into())
+                            .location(token.line, token.location.clone()))?;
                     let truebranch = self.parse(tokens)?
-                    .ok_or(Error::new("?? statement requires a branch".into())
-                        .location(token.line, token.location.clone()))?;
+                        .ok_or(Error::new("?? statement requires a branch".into())
+                            .location(token.line, token.location.clone()))?;
                     let falsebranch = self.parse(tokens)?
-                    .ok_or(Error::new("?? statement requires a false branch".into())
-                        .location(token.line, token.location))?;
+                        .ok_or(Error::new("?? statement requires a false branch".into())
+                            .location(token.line, token.location))?;
     
                     Ok(Some(ParseTree::IfElse(
                         Box::new(cond), Box::new(truebranch), Box::new(falsebranch))))
                 },
                 Op::Export => {
                     let token = tokens.next()
-                        .ok_or(Error::new("export expects one argument of [String], but found nothing".into())
+                        .ok_or(Error::new("export expects an identifer or multiple inside of parens".into())
                             .location(token.line, token.location.clone()))??;
 
                     let names = match token.token() {
