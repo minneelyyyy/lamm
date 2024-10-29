@@ -7,6 +7,8 @@ use crate::error::Error;
 use super::Value;
 use std::io::BufRead;
 use std::ops::Range;
+use std::fmt;
+use std::fmt::Formatter;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Op {
@@ -17,6 +19,7 @@ pub enum Op {
     FloorDiv,
     Exp,
     Equ,
+    Neg,
     Mod,
     LazyEqu,
     TypeDeclaration,
@@ -59,6 +62,63 @@ pub enum Op {
     NonCall,
 }
 
+impl fmt::Display for Op {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Op::Add => "+",
+            Op::Sub => "-",
+            Op::Mul => "*",
+            Op::Div => "/",
+            Op::FloorDiv => "//",
+            Op::Exp => "**",
+            Op::Equ => "=",
+            Op::Neg => "_",
+            Op::Mod => "%",
+            Op::LazyEqu => ".",
+            Op::TypeDeclaration => "?.",
+            Op::FunctionDefine(_n) => ":",
+            Op::FunctionDeclare(_n) => "?:",
+            Op::LambdaDefine(_n) => ";",
+            Op::Arrow => "->",
+            Op::Compose => "~",
+            Op::Id => ",",
+            Op::If => "?",
+            Op::IfElse => "??",
+            Op::GreaterThan => ">",
+            Op::LessThan => "<",
+            Op::EqualTo => "==",
+            Op::NotEqualTo => "!=",
+            Op::GreaterThanOrEqualTo => ">=",
+            Op::LessThanOrEqualTo => ">=",
+            Op::Not => "!",
+            Op::IntCast => "int",
+            Op::FloatCast => "float",
+            Op::BoolCast => "bool",
+            Op::StringCast => "string",
+            Op::Print => "print",
+            Op::OpenArray => "[",
+            Op::CloseArray => "]",
+            Op::Concat => "++",
+            Op::Prepend => "[+",
+            Op::Append => "+]",
+            Op::Insert => "[+]",
+            Op::OpenStatement => "(",
+            Op::CloseStatement => ")",
+            Op::Empty => "empty",
+            Op::And => "&&",
+            Op::Or => "||",
+            Op::Head => "head",
+            Op::Tail => "tail",
+            Op::Init => "init",
+            Op::Fini => "fini",
+            Op::Export => "export",
+            Op::NonCall => "\\",
+        };
+
+        write!(f, "{s}")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     Identifier(String),
@@ -75,9 +135,9 @@ impl TokenType {
             "true"  => TokenType::Constant(Value::Bool(true)),
             "false" => TokenType::Constant(Value::Bool(false)),
             "nil" => TokenType::Constant(Value::Nil),
-            "int"    => TokenType::Operator(Op::IntCast),
-            "float"  => TokenType::Operator(Op::FloatCast),
-            "bool"   => TokenType::Operator(Op::BoolCast),
+            "int" => TokenType::Operator(Op::IntCast),
+            "float" => TokenType::Operator(Op::FloatCast),
+            "bool" => TokenType::Operator(Op::BoolCast),
             "string" => TokenType::Operator(Op::StringCast),
             "print" => TokenType::Operator(Op::Print),
             "empty" => TokenType::Operator(Op::Empty),
@@ -87,7 +147,7 @@ impl TokenType {
             "fini" => TokenType::Operator(Op::Fini),
             "export" => TokenType::Operator(Op::Export),
 
-            // Types
+            // Built-in Types
             "Any" => TokenType::Type(Type::Any),
             "Int" => TokenType::Type(Type::Int),
             "Float" => TokenType::Type(Type::Float),
@@ -193,6 +253,7 @@ impl<R: BufRead> Tokenizer<R> {
             ("**", Op::Exp),
             ("%", Op::Mod),
             ("=", Op::Equ),
+            ("_", Op::Neg),
             (".", Op::LazyEqu),
             ("?.", Op::TypeDeclaration),
             (":", Op::FunctionDefine(1)),
@@ -232,7 +293,7 @@ impl<R: BufRead> Tokenizer<R> {
         if c.is_alphanumeric() {
             let mut token = String::from(c);
 
-            while let Some(c) = self.next_char_if(|&c| c.is_alphanumeric() || c == '.' || c == '\'') {
+            while let Some(c) = self.next_char_if(|&c| c.is_alphanumeric() || c == '.' || c == '\'' || c == '_') {
                 token.push(c);
             }
 

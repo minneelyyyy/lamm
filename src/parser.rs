@@ -109,6 +109,7 @@ impl Parser {
         let operators: HashMap<Op, FunctionType> = HashMap::from([
             (Op::Add, FunctionType(Box::new(Type::Any), vec![Type::Any, Type::Any])),
             (Op::Sub, FunctionType(Box::new(Type::Any), vec![Type::Any, Type::Any])),
+            (Op::Neg, FunctionType(Box::new(Type::Any), vec![Type::Any])),
             (Op::Mul, FunctionType(Box::new(Type::Any), vec![Type::Any, Type::Any])),
             (Op::Div, FunctionType(Box::new(Type::Float), vec![Type::Any, Type::Any])),
             (Op::FloorDiv, FunctionType(Box::new(Type::Int), vec![Type::Any, Type::Any])),

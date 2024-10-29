@@ -89,253 +89,217 @@ impl Executor {
         locals
     }
 
+    fn op_error(op: &Op, args: &[Value]) -> Error {
+        Error::new(format!("no overload of {op} matches the arguments {}",
+                           args.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(", ")))
+    }
+
     pub(crate) fn exec(&mut self, tree: ParseTree) -> Result<Value, Error> {
         match tree {
             ParseTree::Operator(op, args) => {
                 let args: Vec<Value> = args.into_iter()
                     .map(|x| self.exec(x)).collect::<Result<_, _>>()?;
 
-                match op {
-                    Op::Add => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x + y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Float(x + *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Float(*x as f64 + y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x + y)),
-                        [Value::String(x), Value::String(y)] => Ok(Value::String(format!("{x}{y}"))),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        [x, y] => Err(Error::new(format!("no overload of + exists for types {} and {}", x.get_type(), y.get_type()))),
-                        _ => unreachable!(),
-                    }
-                    Op::Concat => match &args[..] {
-                        [Value::Array(xtype, x), Value::Array(ytype, y)] => {
+                match (&op, &args[..]) {
+                    (Op::Add, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x + y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x + *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 + y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x + y)),
+                        (Value::String(x), Value::String(y)) => Ok(Value::String(format!("{x}{y}"))),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Neg, [x]) => match x {
+                        Value::Int(x) => Ok(Value::Int(-x)),
+                        Value::Float(x) => Ok(Value::Float(-x)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Concat, [x, y]) => match (x, y) {
+                        (Value::Array(xtype, x), Value::Nil) => Ok(Value::Array(xtype.clone(), x.clone())),
+                        (Value::Nil, Value::Array(xtype, x)) => Ok(Value::Array(xtype.clone(), x.clone())),
+                        (Value::Array(xtype, x), Value::Array(ytype, y)) =>
                             if xtype != ytype {
-                                return Err(Error::new(format!("expected type {} but found {}", xtype, ytype)));
-                            }
-
-                            Ok(Value::Array(xtype.clone(), [x.clone(), y.clone()].concat()))
-                        },
-                        _ => Err(Error::new("++".into())),
-                    }
-                    Op::Prepend => match &args[..] {
-                        [x, Value::Array(t, y)] => {
+                                Err(Error::new(format!("expected type {} but found {}", xtype, ytype)))
+                            } else {
+                                Ok(Value::Array(xtype.clone(), [x.clone(), y.clone()].concat()))
+                            },
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Prepend, [x, y]) => match (x, y) {
+                        (Value::Nil, Value::Array(xtype, x)) => Ok(Value::Array(xtype.clone(), x.clone())),
+                        (x, Value::Array(t, y)) => {
                             let xtype = x.get_type();
-
                             if *t != xtype {
-                                return Err(Error::new(format!("expected type {} but found {}", t, xtype)));
+                                Err(Error::new(format!("expected type {} but found {}", t, xtype)))
+                            } else {
+                                Ok(Value::Array(xtype, [vec![x.clone()], y.clone()].concat()))
                             }
-
-                            Ok(Value::Array(xtype, [vec![x.clone()], y.clone()].concat()))
                         },
-                        [x, y] => Err(Error::new(format!("no overload of [+ exists for types {} and {}", x.get_type(), y.get_type()))),
-                        _ => unreachable!(),
-                    }
-                    Op::Append => match &args[..] {
-                        [Value::Array(t, y), x] => {
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Append, [x, y]) => match (x, y) {
+                        (Value::Array(xtype, x), Value::Nil) => Ok(Value::Array(xtype.clone(), x.clone())),
+                        (Value::Array(t, y), x) => {
                             let xtype = x.get_type();
-
                             if *t != xtype {
-                                return Err(Error::new(format!("expected type {} but found {}", t, xtype)));
+                                Err(Error::new(format!("expected type {} but found {}", t, xtype)))
+                            } else {
+                                Ok(Value::Array(xtype, [y.clone(), vec![x.clone()]].concat()))
                             }
-
-                            Ok(Value::Array(xtype, [y.clone(), vec![x.clone()]].concat()))
                         },
-                        _ => Err(Error::new("+]".into())),
-                    }
-                    Op::Insert => match &args[..] {
-                        [Value::Int(idx), x, Value::Array(t, y)] => {
-                            let mut y = y.clone();
-                            let xtype = x.get_type();
-
-                            if *t != xtype {
-                                return Err(Error::new(format!("expected type {} but found {}", t, xtype)));
-                            }
-                            
-                            if *idx as usize > y.len() {
-                                return Err(Error::new("attempt to insert out of array len".into()));
-                            }
-
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Insert, [Value::Int(idx), x, Value::Array(t, y)]) => {
+                        let mut y = y.clone();
+                        let xtype = x.get_type();
+                        if *t != xtype {
+                            Err(Error::new(format!("expected type {} but found {}", t, xtype)))
+                        } else if *idx as usize > y.len() {
+                            Err(Error::new("attempt to insert out of array len".into()))
+                        } else {
                             y.insert(*idx as usize, x.clone());
-
                             Ok(Value::Array(t.clone(), y))
-                        },
-                        _ => Err(Error::new("[+]".into())),
-                    }
-                    Op::Sub => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x - y)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Float(*x as f64 - y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Float(x - *y as f64)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x - y)),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::Mul => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x * y)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Float(*x as f64 * y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Float(x * *y as f64)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x * y)),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::Div => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Float(*x as f64 / *y as f64)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Float(x / *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Float(*x as f64 / y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x / y)),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::FloorDiv => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x / y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Int(*x as i64 / y)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Int(x / *y as i64)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Int(*x as i64 / *y as i64)),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::Exp => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Float((*x as f64).powf(*y as f64))),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Float(x.powf(*y as f64))),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Float((*x as f64).powf(*y))),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x.powf(*y))),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(Error::new("todo: fsadfdsf".into())),
-                    }
-                    Op::Mod => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Int(x % y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Float(x % *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Float(*x as f64 % y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Float(x % y)),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::GreaterThan => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x > y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x > *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 > *y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x > y)),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::GreaterThanOrEqualTo => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x >= y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x >= *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 >= *y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x >= y)),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::LessThan => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x < y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x < *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Bool((*x as f64) < *y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x < y)),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::LessThanOrEqualTo => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x <= y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x <= *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 <= *y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x <= y)),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::EqualTo => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x == y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x == *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 == *y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x == y)),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::NotEqualTo => match &args[..] {
-                        [Value::Int(x), Value::Int(y)] => Ok(Value::Bool(x != y)),
-                        [Value::Float(x), Value::Int(y)] => Ok(Value::Bool(*x != *y as f64)),
-                        [Value::Int(x), Value::Float(y)] => Ok(Value::Bool(*x as f64 != *y)),
-                        [Value::Float(x), Value::Float(y)] => Ok(Value::Bool(x != y)),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::Not => match &args[0] {
-                        Value::Bool(b) => Ok(Value::Bool(!b)),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::Or => match &args[..] {
-                        [Value::Bool(x), Value::Bool(y)] => Ok(Value::Bool(*x || *y)),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::And => match &args[..] {
-                        [Value::Bool(x), Value::Bool(y)] => Ok(Value::Bool(*x && *y)),
-                        [Value::Nil, x] => Ok(x.clone()),
-                        [x, Value::Nil] => Ok(x.clone()),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::Compose => match &args[..] {
-                        [_, v] => Ok(v.clone()),
-                        _ => Err(Error::new("todo: actual error output".into())),
-                    }
-                    Op::Head => match &args[0] {
-                        Value::Array(_, x) => Ok(x.first().ok_or(Error::new(format!("passed an empty array to head")))?.clone()),
-                        _ => Err(Error::new("head".into())),
-                    }
-                    Op::Tail => match &args[0] {
-                        Value::Array(t, x) => Ok(Value::Array(t.clone(), if x.len() > 0 { x[1..].to_vec() } else { vec![] })),
-                        _ => Err(Error::new("tail".into())),
-                    }
-                    Op::Init => match &args[0] {
-                        Value::Array(t, x) => Ok(Value::Array(t.clone(), if x.len() > 0 { x[..x.len() - 1].to_vec() } else { vec![] })),
-                        _ => Err(Error::new("init".into())),
-                    }
-                    Op::Fini => match &args[0] {
-                        Value::Array(_, x) => Ok(x.last().ok_or(Error::new(format!("passed an empty array to fini")))?.clone()),
-                        _ => Err(Error::new("fini".into())),
-                    }
-                    Op::Id => match &args[0] {
-                        x => Ok(x.clone()),
-                    }
-                    Op::IntCast => match &args[0] {
+                        }
+                    },
+                    (Op::Sub, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x - y)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 - y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x - *y as f64)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x - y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Mul, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x * y)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 * y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x * *y as f64)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x * y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Div, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Float(*x as f64 / *y as f64)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x / *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 / y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x / y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::FloorDiv, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x / y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Int(*x as i64 / y)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Int(x / *y as i64)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Int(*x as i64 / *y as i64)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Exp, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Float((*x as f64).powf(*y as f64))),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x.powf(*y as f64))),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Float((*x as f64).powf(*y))),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x.powf(*y))),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Mod, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x % y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Float(x % *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Float(*x as f64 % y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x % y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::GreaterThan, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x > y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(*x > *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(*x as f64 > *y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x > y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::GreaterThanOrEqualTo, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x >= y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(*x >= *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(*x as f64 >= *y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x >= y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::LessThan, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x < y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(*x < *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Bool((*x as f64) < *y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x < y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::LessThanOrEqualTo, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x <= y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(*x <= *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(*x as f64 <= *y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x <= y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::EqualTo, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x == y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(*x == *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(*x as f64 == *y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x == y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::NotEqualTo, [x, y]) => match (x, y) {
+                        (Value::Int(x), Value::Int(y)) => Ok(Value::Bool(x != y)),
+                        (Value::Float(x), Value::Int(y)) => Ok(Value::Bool(*x != *y as f64)),
+                        (Value::Int(x), Value::Float(y)) => Ok(Value::Bool(*x as f64 != *y)),
+                        (Value::Float(x), Value::Float(y)) => Ok(Value::Bool(x != y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Not, [Value::Bool(b)]) => Ok(Value::Bool(!b)),
+                    (Op::Or, [x, y]) => match (x, y) {
+                        (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(*x || *y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::And, [x, y]) => match (x, y) {
+                        (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(*x && *y)),
+                        _ => Err(Self::op_error(&op, &args)),
+                    },
+                    (Op::Compose, [_, v]) => Ok(v.clone()),
+                    (Op::Head, [Value::Array(_, x)]) => Ok(x.first().ok_or(Error::new("passed an empty array to head".into()))?.clone()),
+                    (Op::Tail, [Value::Array(t, x)]) => Ok(Value::Array(t.clone(), if x.len() > 0 { x[1..].to_vec() } else { vec![] })),
+                    (Op::Init, [Value::Array(t, x)]) => Ok(Value::Array(t.clone(), if x.len() > 0 { x[..x.len() - 1].to_vec() } else { vec![] })),
+                    (Op::Fini, [Value::Array(_, x)]) => Ok(x.last().ok_or(Error::new("passed an empty array to fini".into()))?.clone()),
+                    (Op::Id, [x]) => Ok(x.clone()),
+                    (Op::IntCast, [x]) => match x {
                         Value::Int(x) => Ok(Value::Int(*x)),
                         Value::Float(x) => Ok(Value::Int(*x as i64)),
                         Value::Bool(x) => Ok(Value::Int(if *x { 1 } else { 0 })),
                         Value::String(x) => {
                             let r: i64 = x.parse().map_err(|_| Error::new(format!("failed to parse {} into {}", x, Type::Int)))?;
                             Ok(Value::Int(r))
-                        }
-                            x => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Int))),
-                    }
-                    Op::FloatCast => match &args[0] {
+                        },
+                        _ => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Int))),
+                    },
+                    (Op::FloatCast, [x]) => match x {
                         Value::Int(x) => Ok(Value::Float(*x as f64)),
                         Value::Float(x) => Ok(Value::Float(*x)),
                         Value::Bool(x) => Ok(Value::Float(if *x { 1.0 } else { 0.0 })),
                         Value::String(x) => {
                             let r: f64 = x.parse().map_err(|_| Error::new(format!("failed to parse {} into {}", x, Type::Float)))?;
                             Ok(Value::Float(r))
-                        }
-                        x => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Float))),
-                    }
-                    Op::BoolCast => match &args[0] {
+                        },
+                        _ => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Float))),
+                    },
+                    (Op::BoolCast, [x]) => match x {
                         Value::Int(x) => Ok(Value::Bool(*x != 0)),
                         Value::Float(x) => Ok(Value::Bool(*x != 0.0)),
                         Value::Bool(x) => Ok(Value::Bool(*x)),
                         Value::String(x) => Ok(Value::Bool(!x.is_empty())),
                         Value::Array(_, vec) => Ok(Value::Bool(!vec.is_empty())),
-                        x => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Bool))),
-                    }
-                    Op::StringCast => Ok(Value::String(format!("{}", &args[0]))),
-                    Op::Print => match &args[0] {
+                        _ => Err(Error::new(format!("no possible conversion from {} into {}", x, Type::Bool))),
+                    },
+                    (Op::StringCast, [x]) => Ok(Value::String(format!("{}", x))),
+                    (Op::Print, [x]) => match x {
                         Value::String(s) => {
                             println!("{s}");
                             Ok(Value::Nil)
                         }
-                        x => {
+                        _ => {
                             println!("{x}");
                             Ok(Value::Nil)
                         }
-                    }
-                    _ => unreachable!(),
+                    },
+                    _ => Err(Self::op_error(&op, &args)),
                 }
             }
             ParseTree::Equ(ident, body, scope) => {
@@ -345,7 +309,9 @@ impl Executor {
                     let value = self.exec(*body)?;
                     let g = self.globals.clone();
 
-                    let r = self.add_local_mut(ident.clone(), Arc::new(Mutex::new(Object::value(value, g, self.locals.to_owned()))))
+                    let r = self.add_local_mut(
+                        ident.clone(),
+                        Arc::new(Mutex::new(Object::value(value, g, self.locals.to_owned()))))
                         .exec(*scope);
 
                     self.locals.remove(&ident);
