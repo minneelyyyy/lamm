@@ -77,11 +77,16 @@ export (e phi)
 All functions in Lamm are **scoped** similarly to variables. Functions are declared using the `:` operator, which can be extended with more `:` and `.` characters to let Lamm know how many arguments the function takes.
 
 ```
-: inc x + x 1
-	(inc 24)  # => 25
+: inc x
+	+ x 1
+(inc 24)  # => 25
 
-:. pythag a b sqrt + ** a 2.0 ** b 2.0
-	(pythag 3 4)  # => 5
+: sqrt x
+	** x 0.5
+
+:. pythag a b
+	(sqrt + ** a 2.0 ** b 2.0)
+(pythag 3 4)  # => 5
 
 :::::. ten'args a b c d e f g h i j
 	[a b c d e f g h i j]
