@@ -4,6 +4,7 @@ use super::error::Error;
 
 use std::collections::HashMap;
 use std::iter::Peekable;
+use std::cmp::Ordering;
 
 #[derive(Clone, Debug)]
 pub(crate) enum ParseTree {
@@ -176,40 +177,7 @@ impl Parser {
 
         match token.token() {
             TokenType::Constant(c) => Ok(Some(ParseTree::Value(c))),
-            TokenType::Identifier(ident) => {
-                match self.get_object_type(&ident).ok_or(
-                        Error::new(format!("undefined identifier {ident}"))
-                            .location(token.line, token.location))? {
-                    Type::Function(f) => {
-                        let f = f.clone();
-                        let args = self.get_args(tokens, f.1.len())?;
-
-                        if args.len() < f.1.len() {
-                            let mut counter = 0;
-                            let func_args: Vec<Type> = f.1.iter().skip(args.len()).cloned().collect();
-                            let (names, types): (Vec<String>, Vec<Type>) = func_args
-                                .into_iter()
-                                .map(|t| {
-                                    counter += 1;
-                                    (format!("{counter}"), t)
-                                }).unzip();
-                            let function_type = FunctionType(f.0.clone(), types);
-
-                            Ok(Some(ParseTree::Value(Value::Function(Function::lambda(
-                                function_type,
-                                names.clone(),
-                                Box::new(ParseTree::FunctionCall(ident,
-                                    vec![
-                                        args,
-                                        names.into_iter().map(|x| ParseTree::Variable(x)).collect()
-                                    ].concat())))))))
-                        } else {
-                            Ok(Some(ParseTree::FunctionCall(ident, args)))
-                        }
-                    }
-                    _ => Ok(Some(ParseTree::Variable(ident))),
-                }
-            },
+            TokenType::Identifier(ident) => Ok(Some(ParseTree::Variable(ident))),
             TokenType::Operator(op) => match op {
                 Op::OpenArray => {
                     let mut depth = 1;
@@ -253,7 +221,7 @@ impl Parser {
 
                     // take tokens until we reach the end of this array
                     // if we don't collect them here it causes rust to overflow computing the types
-                    let array_tokens = tokens.by_ref().take_while(|t| match t {
+                    let tokens = tokens.by_ref().take_while(|t| match t {
                         Ok(t) => match t.token() {
                             TokenType::Operator(Op::OpenStatement) => {
                                 depth += 1;
@@ -268,22 +236,59 @@ impl Parser {
                         _ => true,
                     }).collect::<Result<Vec<_>, Error>>()?;
 
-                    let array_tokens = array_tokens
+                    let mut tokens = tokens
                         .into_iter()
                         .map(|t| Ok(t))
                         .collect::<Vec<Result<Token, Error>>>()
                         .into_iter()
                         .peekable();
 
-                    let trees: Vec<ParseTree> = self.clone().trees(array_tokens)
-                        .collect::<Result<_, Error>>()?;
+                    if let Some(Ok(Some(Type::Function(f)))) = tokens.peek()
+                        .map(|t| t.clone().and_then(|t| match t.token() {
+                            TokenType::Identifier(ident) =>
+                                Ok(Some(self.get_object_type(&ident).ok_or(
+                                    Error::new(format!("undefined identifier {ident}"))
+                                        .location(token.line, token.location))?)),
+                            _ => Ok(None),
+                        }))
+                    {
+                        let token = tokens.next().unwrap().unwrap();
+                        let params: Vec<ParseTree> = self.clone().trees(tokens).collect::<Result<_, Error>>()?;
 
-                    let tree = trees.into_iter().fold(
-                        ParseTree::Nop,
-                        |acc, x| ParseTree::Operator(Op::Compose, vec![acc, x.clone()]),
-                    );
+                        match params.len().cmp(&f.1.len()) {
+                            Ordering::Equal => Ok(Some(ParseTree::FunctionCall(token.lexeme, params))),
+                            Ordering::Greater => Err(Error::new(format!("too many arguments to {}", token.lexeme)).location(token.line, token.location)),
+                            Ordering::Less => {
+                                let mut counter = 0;
+                                let func_args: Vec<Type> = f.1.iter().skip(params.len()).cloned().collect();
+                                let (names, types): (Vec<String>, Vec<Type>) = func_args
+                                    .into_iter()
+                                    .map(|t| {
+                                        counter += 1;
+                                        (format!("{counter}"), t)
+                                    }).unzip();
+                                let function_type = FunctionType(f.0.clone(), types);
+    
+                                Ok(Some(ParseTree::Value(Value::Function(Function::lambda(
+                                    function_type,
+                                    names.clone(),
+                                    Box::new(ParseTree::FunctionCall(token.lexeme,
+                                        vec![
+                                            params,
+                                            names.into_iter().map(|x| ParseTree::Variable(x)).collect()
+                                        ].concat())))))))
+                            }
+                        }
+                    } else {
+                        let trees: Vec<ParseTree> = self.clone().trees(tokens).collect::<Result<_, Error>>()?;
 
-                    Ok(Some(tree))
+                        let tree = trees.into_iter().fold(
+                            ParseTree::Nop,
+                            |acc, x| ParseTree::Operator(Op::Compose, vec![acc, x.clone()]),
+                        );
+
+                        Ok(Some(tree))
+                    }
                 },
                 Op::Equ => {
                     let token = tokens.next()
@@ -361,10 +366,6 @@ impl Parser {
                 },
                 Op::LambdaDefine(arg_count) => Ok(Some(ParseTree::LambdaDefinition(self.parse_lambda_definition(tokens, arg_count)?))),
                 Op::Empty => Ok(Some(ParseTree::Value(Value::Array(Type::Any, vec![])))),
-                Op::NonCall => {
-                    let name = Self::get_identifier(tokens.next())?;
-                    Ok(Some(ParseTree::NonCall(name)))
-                },
                 Op::If => {
                     let cond = self.parse(tokens)?
                         .ok_or(Error::new("? statement requires a condition".into())

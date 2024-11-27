@@ -78,42 +78,47 @@ All functions in Lamm are **scoped** similarly to variables. Functions are decla
 
 ```
 : inc x + x 1
-	inc 24  # => 25
+	(inc 24)  # => 25
 
 :. pythag a b sqrt + ** a 2.0 ** b 2.0
-	pythag 3 4  # => 5
+	(pythag 3 4)  # => 5
 
 :::::. ten'args a b c d e f g h i j
 	[a b c d e f g h i j]
 ```
 
 The parameter types and return type of functions can be declared using a special syntax unique to function and lambda definitions.
+Calling a function requires parenthises around the call.
 
 ```
 # Takes an x of `Any` type
-: inc x + x 1
-	inc 12  # => 13
+: inc x
+	+ x 1
+(inc 12)  # => 13
 
 # Takes an x of `Int` and returns an `Int`
-: inc ?. x Int -> Int + x 1
-	inc 9  # => 10
+: inc ?. x Int -> Int
+	+ x 1
+(inc 9)  # => 10
 ```
 
 The `?.` operator is unique to function declarations and is used to specify the type of an argument. There are also first class functions, here is the syntax for it.
 
 ```
 # Applies a function to any value
-:. apply : f x f x
-	apply \sqrt 9  # => 3
+:. apply : f x
+	(f x)
+(apply sqrt 9)  # => 3
 
 # Applies a function f which maps an Int to an Int to x
-:. apply'int ?: f Int -> Int ?. x Int -> Int f x
-	apply'int \sqrt 36  # => 6
+:. apply'int ?: f Int -> Int ?. x Int -> Int
+	(f x)
+(apply'int sqrt 36)  # => 6
 ```
 
-The `:` operator inside of a function prototype tells Lamm that this argument must be a function where every argument and it's return type are all `Any`. This means that `: f` is essentially syntactic sugar for `?: f Any -> Any`. Also, in order to pass a function to a function, you must use the `\` operator, which tells Lamm not to call the function.
+The `:` operator inside of a function prototype tells Lamm that this argument must be a function where every argument and it's return type are all `Any`. This means that `: f` is essentially syntactic sugar for `?: f Any -> Any`. You can pass a function with just it's identifier.
 
-And off course, `:` and `?:` in function prototypes can also be extended depending on the number of arguments the function must take.
+And of course, `:` and `?:` in function prototypes can also be extended depending on the number of arguments the function must take.
 
 ## Branching
 
@@ -171,28 +176,28 @@ Using these, you can build a lot of fundamental functional paradigm functions.
 
 ```
 :. map : f ?. x [] -> []
-	?? bool x
-		+ f head x map \f tail x
-		empty
-map ;x ** x 2 [1 2 3 4 5 6 7 8 9 10]  # => [1 4 9 16 25 36 49 64 81 100]
+  ?? bool x
+    [+ (f head x) (map f tail x)
+    empty
+(map ;x ** x 2 [1 2 3 4 5 6 7 8 9 10])  # => [1 4 9 16 25 36 49 64 81 100]
 
 :: iterate : f i count -> []
-	?? > count 0 
-		+ i iterate \f f i - count 1
-		empty
-iterate (+ 1) 0 10  # => [0 1 2 3 4 5 6 7 8 9]
+  ?? > count 0
+    [+ i (iterate f (f i) - count 1)
+    empty
+(iterate (+ 1) 0 10)  # => [0 1 2 3 4 5 6 7 8 9]
 
 :. take ?. n Int ?. x [] -> []
 	?? > n 0
-		+ head x take - n 1 tail x
+		[+ head x (take - n 1 tail x)
 		empty
-take 3 [1 2 3 4 5]  # => [1 2 3]
+(take 3 [1 2 3 4 5])  # => [1 2 3]
 
 :. take'while ?: pred Any -> Bool ?. x [] -> []
-	?? && bool x pred head x
-		+ head x take'while \pred tail x
+	?? && bool x (pred head x)
+		[+ head x (take'while pred tail x)
 		empty
-take'while (> 10) [1 3 5 7 9 11 13 15 16]  # => [1 3 5 7 9]
+(take'while (> 10) [1 3 5 7 9 11 13 15 16])  # => [1 3 5 7 9]
 ```
 
 ## Lambdas

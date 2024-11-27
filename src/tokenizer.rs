@@ -59,7 +59,6 @@ pub enum Op {
     Init,
     Fini,
     Export,
-    NonCall,
 }
 
 impl fmt::Display for Op {
@@ -112,7 +111,6 @@ impl fmt::Display for Op {
             Op::Init => "init",
             Op::Fini => "fini",
             Op::Export => "export",
-            Op::NonCall => "\\",
         };
 
         write!(f, "{s}")
@@ -281,7 +279,6 @@ impl<R: BufRead> Tokenizer<R> {
             ("!", Op::Not),
             ("&&", Op::And),
             ("||", Op::Or),
-            ("\\", Op::NonCall),
         ]);
 
         let c = if let Some(c) = self.next_char() {
