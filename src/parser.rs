@@ -29,7 +29,6 @@ pub(crate) enum ParseTree {
     GeneratedFunction(Function),
 
     Nop,
-    NonCall(String),
     Export(Vec<String>),
 }
 

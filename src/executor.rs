@@ -410,13 +410,6 @@ impl Executor {
 
                 Ok(Value::Nil)
             }
-            ParseTree::NonCall(name) => {
-                let obj = self.get_object_mut(&name)?;
-
-                let v = obj.lock().unwrap().eval()?;
-
-                Ok(v)
-            }
             ParseTree::_Local(_idx) => todo!(),
             ParseTree::GeneratedFunction(function) => Ok(Value::Function(function.globals(self.globals.clone()).locals(self.locals.clone()))),
         }

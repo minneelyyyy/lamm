@@ -119,12 +119,6 @@ impl Function {
                 ParseTree::Value(_) => body,
                 ParseTree::Nop => body,
                 ParseTree::Export(_) => body,
-                ParseTree::NonCall(ref var) => if let Some(idx) =
-                    args.into_iter().position(|r| *r == *var) {
-                        Box::new(ParseTree::_Local(idx))
-                    } else {
-                        body
-                    }
                 ParseTree::GeneratedFunction(_) => todo!(),
             }
         }
